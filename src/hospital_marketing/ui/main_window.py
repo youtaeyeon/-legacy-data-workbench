@@ -9,6 +9,7 @@ from typing import Callable
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..documents import SUPPORTED_EXTENSIONS
+from ..providers import ProviderConfigurationError, ProviderRequestError
 from ..settings import AppSettings, SettingsStore
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
@@ -229,6 +230,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 status += " · 읽을 파일이 없습니다. 선택 확장자 파일이 폴더 바로 아래에 있는지 확인하세요."
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
+        except (ProviderConfigurationError, ProviderRequestError) as exc:
+            self.status_label.setText(f"AI 처리 실패: {exc} 목업 모드로 다시 실행할 수 있습니다.")
+            self.open_dashboard_button.setEnabled(False)
+            self.export_dashboard_button.setEnabled(False)
         except Exception:
             self.status_label.setText("처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요.")
             self.open_dashboard_button.setEnabled(False)

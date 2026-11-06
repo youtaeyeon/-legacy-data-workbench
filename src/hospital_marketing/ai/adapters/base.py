@@ -49,8 +49,30 @@ class RemoteAIProvider(AIProvider, ABC):
             if not text.strip():
                 raise ValueError("empty response")
             return text.strip()
+        except httpx.TimeoutException:
+            raise ProviderRequestError("AI 제공자 요청 시간이 초과됐습니다. 네트워크 상태를 확인하고 다시 시도해 주세요.") from None
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code in {401, 403}:
+                message = f"AI 제공자 인증에 실패했습니다(HTTP {status_code}). API 키와 계정 권한을 확인하세요."
+            elif status_code == 404:
+                message = "요청한 모델을 찾을 수 없습니다(HTTP 404). 모델 ID를 확인하세요."
+            elif status_code == 429:
+                message = "AI 제공자 요청 한도 또는 사용량 한도에 도달했습니다(HTTP 429). 계정 사용량을 확인하세요."
+            else:
+                message = f"AI 제공자에서 HTTP {status_code} 오류를 반환했습니다. 잠시 후 다시 시도해 주세요."
+            raise ProviderRequestError(message) from None
+        except httpx.RequestError:
+            raise ProviderRequestError("AI 제공자에 연결할 수 없습니다. 네트워크 또는 제공자 상태를 확인하세요.") from None
+        except ProviderRequestError:
+            raise
+        except (ValueError, KeyError, TypeError, IndexError):
+            raise ProviderRequestError("AI 제공자 응답을 읽을 수 없습니다. 모델과 요청 형식을 확인하세요.") from None
         except Exception:
-            raise ProviderRequestError("AI 제공자 요청을 완료하지 못했습니다.") from None
+            raise ProviderRequestError("AI 제공자 요청을 완료하지 못했습니다. 설정을 확인해 주세요.") from None
+
+    def test_connection(self) -> None:
+        self._complete('Return only the JSON object {"ok": true}.')
 
     def classify_content(self, item: ContentItem, products: Sequence[str]) -> RelevanceResult:
         prompt = json.dumps(

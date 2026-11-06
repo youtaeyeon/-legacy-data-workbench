@@ -18,6 +18,16 @@
 
 실제 웹 검색·SNS 수집과 실제 회사 파일 사용은 과제 MVP 범위에 포함하지 않습니다. 기본 목업 모드는 네트워크나 API 키가 필요 없습니다. 실제 AI 제공자를 선택하면 선택한 파일에서 추출한 내용이 해당 외부 AI 제공자에 전송됩니다.
 
+## AI 설정 가이드
+
+- OpenAI API 키: [API keys](https://platform.openai.com/api-keys) · 모델 예시: `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6-astra`
+- Anthropic API 키: [Console](https://console.anthropic.com/settings/keys) · 모델 예시: `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`
+- Gemini API 키: [Google AI Studio](https://aistudio.google.com/app/apikey) · 모델 예시: `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-4-argon`
+- 앱의 AI 설정 창에서 권장 모델을 고르거나 모델 ID를 직접 입력할 수 있습니다. 제공자별 현재 목록은 설정 창의 `설정 가이드`에서도 확인하세요.
+- 모델 ID는 바뀔 수 있으므로 실제 사용 전 공식 카탈로그를 확인하세요: [OpenAI](https://developers.openai.com/api/docs/models) · [Anthropic](https://platform.claude.com/docs/en/models/overview) · [Gemini](https://ai.google.dev/gemini-api/docs/models)
+- 목업 모드는 외부 AI 요청 없이 동작하며 비용이 발생하지 않습니다. 실제 제공자 선택 후 연결 테스트나 앱 처리를 실행하면 API 사용량에 따라 비용이 발생할 수 있습니다.
+- 실제 회사 자료나 개인정보는 외부 AI 제공자에 보내지 마세요. API 키는 설정 파일이 아닌 OS 자격 증명 저장소에 보관합니다.
+
 ## 개발 실행
 
 Python 3.12 이상이 필요합니다.
