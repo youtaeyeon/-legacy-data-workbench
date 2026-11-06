@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hospital-marketing-mvp"
-version = "0.1.0"
+version = "0.1.1"
 description = "Mock-data MVP for hospital marketing knowledge workflows"
 requires-python = ">=3.12,<3.15"
 dependencies = [
