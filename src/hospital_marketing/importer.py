@@ -198,12 +198,20 @@ class ImportService:
             finally:
                 workbook.close()
 
-        counts = Counter(hospital_id for hospital_id, _, _, _ in candidate_rows)
-        duplicate_ids = {hospital_id for hospital_id, count in counts.items() if count > 1}
+        counts = Counter((file_name, hospital_id) for hospital_id, _, file_name, _ in candidate_rows)
+        duplicate_ids = {
+            (file_name, hospital_id)
+            for (file_name, hospital_id), count in counts.items()
+            if count > 1
+        }
         for hospital_id, _, file_name, row_number in candidate_rows:
-            if hospital_id in duplicate_ids:
-                report.issues.append(ImportIssue(file_name, "Hospitals", row_number, "hospital_id", "duplicate_hospital_id", f"병원 ID {hospital_id}가 여러 번 있어 해당 ID의 행을 모두 건너뛰었습니다."))
-        incoming = [(hospital, file_name, row_number) for hospital_id, hospital, file_name, row_number in candidate_rows if hospital_id not in duplicate_ids]
+            if (file_name, hospital_id) in duplicate_ids:
+                report.issues.append(ImportIssue(file_name, "Hospitals", row_number, "hospital_id", "duplicate_hospital_id", f"파일 안에서 병원 ID {hospital_id}가 여러 번 있어 해당 ID의 행을 모두 건너뛰었습니다."))
+        incoming = [
+            (hospital, file_name, row_number)
+            for hospital_id, hospital, file_name, row_number in candidate_rows
+            if (file_name, hospital_id) not in duplicate_ids
+        ]
 
         if has_snapshot:
             stored_ids = {hospital.hospital_id for hospital in self.repository.list_hospitals()}
