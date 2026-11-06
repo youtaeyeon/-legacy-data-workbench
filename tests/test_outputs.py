@@ -1,6 +1,7 @@
 import json
 from datetime import date, datetime
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from openpyxl import load_workbook
@@ -52,6 +53,8 @@ def test_generates_standalone_filterable_html_without_irrelevant_content(tmp_pat
     assert "병원 일상" not in html
     assert "<script src=" not in html
     assert 'rel="stylesheet" href=' not in html
+    assert "fonts.googleapis.com" not in html
+    assert "img.youtube.com" not in html
     assert "example.test/content/1" in html
 
     class LocalAssetParser(HTMLParser):
@@ -68,6 +71,65 @@ def test_generates_standalone_filterable_html_without_irrelevant_content(tmp_pat
     parser = LocalAssetParser()
     parser.feed(html)
     assert parser.local_references == []
+    repository.close()
+
+
+def test_dashboard_uses_reference_layout_and_only_available_hospital_fields(tmp_path):
+    repository = _repository(tmp_path)
+
+    manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
+
+    html = manifest.dashboard.read_text(encoding="utf-8")
+    assert ".side" in html
+    assert "--bg:#ffffff" in html
+    assert "prefers-color-scheme:dark" in html
+    assert 'data-view="sales"' in html
+    assert 'data-view="marketing"' in html
+    assert 'data-view="content"' in html
+    assert "목업 병원 001" in html
+    assert "가상권역 A" in html
+    assert "제품 소개 리플릿" in html
+    assert "목업 채널" in html
+    assert "울트라클리어 소개" in html
+    assert "대표명" not in html
+    assert "연락처" not in html
+    assert "010-3456" not in html
+    assert "신상성형외과" not in html
+    repository.close()
+
+
+def test_dashboard_reference_is_preserved_under_docs_design():
+    reference = Path(__file__).resolve().parents[1] / "docs" / "design" / "dashboard-reference.html"
+
+    assert reference.is_file()
+    html = reference.read_text(encoding="utf-8")
+    assert "[AI 참고용 디자인 가이드]" in html
+    assert "240px 사이드바" in html
+
+
+def test_dashboard_keeps_mock_label_and_formats_visible_dates(tmp_path):
+    repository = _repository(tmp_path)
+
+    manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
+
+    html = manifest.dashboard.read_text(encoding="utf-8")
+    assert "MOCK DATA · MARKETING WIKI" in html
+    assert "function formatDate(value" in html
+    assert "formatDate(h.contract_date)" in html
+    assert "formatDate(items[0].content.published_at" in html
+    assert "formatDate(content.published_at" in html
+    repository.close()
+
+
+def test_content_feed_filters_by_content_matched_product_only(tmp_path):
+    repository = _repository(tmp_path)
+
+    manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
+
+    html = manifest.dashboard.read_text(encoding="utf-8")
+    content_view = html.split("function renderContent(hospitals)", 1)[1].split("function render()", 1)[0]
+    assert "const productMatch = !product.value || content.matched_product === product.value;" in content_view
+    assert "hospital.products.includes(product.value)" not in content_view
     repository.close()
 
 
