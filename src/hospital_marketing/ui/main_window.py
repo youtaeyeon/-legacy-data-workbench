@@ -39,6 +39,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 6px; color: #000000; }
             QLabel#source_label, QLabel#target_label { color: #000000; }
             QLineEdit { min-height: 34px; border: 1px solid rgba(9,34,63,0.2); border-radius: 4px; padding: 4px 8px; background: #faf7ee; color: #000000; }
+            QCheckBox { color: #000000; }
             QPushButton { min-height: 36px; border: 1px solid rgba(9,34,63,0.18); border-radius: 4px; padding: 4px 14px; background: #faf7ee; color: #09223f; }
             QPushButton:hover { background: #e9e3d3; }
             QPushButton#run_import_button { background: #09223f; color: #f3eee2; font-weight: 700; }

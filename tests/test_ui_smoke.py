@@ -136,6 +136,7 @@ def test_main_window_persists_extension_checkboxes_and_black_folder_labels(tmp_p
     window = MainWindow(settings_store, workflow)
     assert set(window.extension_checkboxes) == set(SUPPORTED_EXTENSIONS)
     assert all(box.isChecked() for box in window.extension_checkboxes.values())
+    assert "QCheckBox { color: #000000; }" in window.centralWidget().styleSheet()
     assert "color: #000000" in window.source_label.styleSheet()
     assert "color: #000000" in window.target_label.styleSheet()
 
