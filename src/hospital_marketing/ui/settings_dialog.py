@@ -1,16 +1,125 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
+from threading import Event
 from typing import Any
 
 import httpx
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..ai.models import RECOMMENDED_MODELS, model_id_error
 from ..ai.registry import ProviderRegistry
 from ..credentials import CredentialStore, CredentialStoreError
 from ..providers import ProviderConfigurationError, ProviderRequestError
 from ..settings import SettingsStore
+
+
+class _CancellationAwareHttpClient:
+    def __init__(self, client: Any, cancel_event: Event):
+        self._client = client
+        self._cancel_event = cancel_event
+
+    def post(self, *args, **kwargs):
+        if self._cancel_event.is_set():
+            raise ProviderRequestError("연결 테스트가 취소되었습니다.")
+        return self._client.post(*args, **kwargs)
+
+
+def _send_connection_test(
+    provider_registry: ProviderRegistry,
+    provider_id: str,
+    model_id: str,
+    api_key: str,
+    http_client: Any | None,
+    on_retry: Callable[[int, int, float], None],
+    sleep_fn: Callable[[float], None],
+    cancel_event: Event,
+) -> None:
+    def run_with_client(client: Any) -> None:
+        provider = provider_registry.create(
+            provider_id,
+            api_key=api_key,
+            model=model_id,
+            http_client=_CancellationAwareHttpClient(client, cancel_event),
+            on_retry=on_retry,
+            sleep_fn=sleep_fn,
+        )
+        connection_test = getattr(provider, "test_connection", None)
+        if not callable(connection_test):
+            raise ProviderConfigurationError("선택한 제공자는 연결 테스트를 지원하지 않습니다.")
+        connection_test()
+
+    if http_client is None:
+        with httpx.Client(timeout=30.0) as client:
+            run_with_client(client)
+    else:
+        run_with_client(http_client)
+
+
+class _ConnectionTestSignals(QtCore.QObject):
+    retry = QtCore.Signal(int, int, float)
+    finished = QtCore.Signal(bool, str)
+
+
+class _ConnectionTestWorker(QtCore.QRunnable):
+    def __init__(
+        self,
+        provider_registry: ProviderRegistry,
+        provider_id: str,
+        model_id: str,
+        api_key: str,
+        http_client: Any | None,
+        cancel_event: Event,
+        retry_sleep_fn: Callable[[float], None] | None,
+    ):
+        super().__init__()
+        self.signals = _ConnectionTestSignals()
+        self.provider_registry = provider_registry
+        self.provider_id = provider_id
+        self.model_id = model_id
+        self.api_key = api_key
+        self.http_client = http_client
+        self.cancel_event = cancel_event
+        self.retry_sleep_fn = retry_sleep_fn
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        if self.cancel_event.is_set():
+            self.signals.finished.emit(False, "")
+            return
+
+        def cancellable_sleep(delay: float) -> None:
+            if self.retry_sleep_fn is None:
+                cancelled = self.cancel_event.wait(delay)
+            else:
+                self.retry_sleep_fn(delay)
+                cancelled = self.cancel_event.is_set()
+            if cancelled:
+                raise ProviderRequestError("연결 테스트가 취소되었습니다.")
+
+        def report_retry(retry_number: int, max_retries: int, delay: float) -> None:
+            if self.cancel_event.is_set():
+                raise ProviderRequestError("연결 테스트가 취소되었습니다.")
+            self.signals.retry.emit(retry_number, max_retries, delay)
+
+        try:
+            _send_connection_test(
+                self.provider_registry,
+                self.provider_id,
+                self.model_id,
+                self.api_key,
+                self.http_client,
+                report_retry,
+                cancellable_sleep,
+                self.cancel_event,
+            )
+        except (ProviderConfigurationError, ProviderRequestError) as exc:
+            self.signals.finished.emit(False, str(exc))
+        except Exception:
+            self.signals.finished.emit(False, "연결 테스트 중 오류가 발생했습니다. 설정과 네트워크를 확인하세요.")
+        else:
+            self.signals.finished.emit(True, "연결 성공: 선택한 제공자와 모델을 사용할 수 있습니다.")
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -21,12 +130,19 @@ class SettingsDialog(QtWidgets.QDialog):
         provider_registry: ProviderRegistry,
         parent=None,
         http_client: Any | None = None,
+        retry_sleep_fn: Callable[[float], None] | None = None,
     ):
         super().__init__(parent)
         self.settings_store = settings_store
         self.credential_store = credential_store
         self.provider_registry = provider_registry
         self.http_client = http_client
+        self.retry_sleep_fn = retry_sleep_fn
+        self._connection_worker: _ConnectionTestWorker | None = None
+        self._connection_cancel_event: Event | None = None
+        self._connection_provider_id = ""
+        self._connection_model_id = ""
+        self._closing = False
         settings = settings_store.load()
         self.setWindowTitle("AI 제공자 설정")
         self.setModal(True)
@@ -75,6 +191,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self.test_connection_button.setObjectName("test_connection_button")
         self.test_connection_button.clicked.connect(self._test_connection)
         connection_buttons.addWidget(self.test_connection_button)
+        self.cancel_connection_button = QtWidgets.QPushButton("테스트 취소")
+        self.cancel_connection_button.setObjectName("cancel_connection_button")
+        self.cancel_connection_button.setVisible(False)
+        self.cancel_connection_button.clicked.connect(self._cancel_connection_test)
+        connection_buttons.addWidget(self.cancel_connection_button)
         self.guide_button = QtWidgets.QPushButton("설정 가이드")
         self.guide_button.setObjectName("ai_settings_guide_button")
         self.guide_button.clicked.connect(self._show_guide)
@@ -87,6 +208,12 @@ class SettingsDialog(QtWidgets.QDialog):
         self.connection_status_label.setObjectName("connection_status_label")
         self.connection_status_label.setWordWrap(True)
         layout.addWidget(self.connection_status_label)
+        self.connection_progress_bar = QtWidgets.QProgressBar()
+        self.connection_progress_bar.setObjectName("connection_progress_bar")
+        self.connection_progress_bar.setRange(0, 0)
+        self.connection_progress_bar.setTextVisible(False)
+        self.connection_progress_bar.setVisible(False)
+        layout.addWidget(self.connection_progress_bar)
 
         buttons = QtWidgets.QHBoxLayout()
         self.clear_key_button = QtWidgets.QPushButton("선택 제공자 키 삭제")
@@ -97,9 +224,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.save_button.setObjectName("save_settings_button")
         self.save_button.clicked.connect(self._save)
         buttons.addWidget(self.save_button)
-        cancel = QtWidgets.QPushButton("취소")
-        cancel.clicked.connect(self.reject)
-        buttons.addWidget(cancel)
+        self.dialog_cancel_button = QtWidgets.QPushButton("취소")
+        self.dialog_cancel_button.clicked.connect(self.reject)
+        buttons.addWidget(self.dialog_cancel_button)
         layout.addLayout(buttons)
         self._refresh_key_status()
 
@@ -166,6 +293,8 @@ class SettingsDialog(QtWidgets.QDialog):
         )
 
     def _test_connection(self) -> None:
+        if self._connection_worker is not None:
+            return
         provider_id = self.provider_combo.currentText()
         if provider_id == "mock":
             self.connection_status_label.setText("목업 모드는 외부 연결을 사용하지 않습니다.")
@@ -181,38 +310,90 @@ class SettingsDialog(QtWidgets.QDialog):
         try:
             if not api_key:
                 api_key = self.credential_store.get(provider_id) or ""
-            if not api_key:
-                self.connection_status_label.setText("API 키가 없습니다. 키를 입력하거나 제공자 키를 저장해 주세요.")
-                return
-            if self.http_client is None:
-                with httpx.Client(timeout=30.0) as client:
-                    self._send_connection_test(provider_id, model_id, api_key, client)
-            else:
-                self._send_connection_test(provider_id, model_id, api_key, self.http_client)
-        except (CredentialStoreError, ProviderConfigurationError, ProviderRequestError) as exc:
+        except CredentialStoreError as exc:
             self.connection_status_label.setText(f"연결 실패: {exc}")
-        except Exception:
-            self.connection_status_label.setText("연결 테스트 중 오류가 발생했습니다. 설정과 네트워크를 확인하세요.")
-        else:
-            self.connection_status_label.setText("연결 성공: 선택한 제공자와 모델을 사용할 수 있습니다.")
+            return
+        if not api_key:
+            self.connection_status_label.setText("API 키가 없습니다. 키를 입력하거나 제공자 키를 저장해 주세요.")
+            return
 
-    def _send_connection_test(
-        self,
-        provider_id: str,
-        model_id: str,
-        api_key: str,
-        http_client: Any,
-    ) -> None:
-        provider = self.provider_registry.create(
+        self._connection_provider_id = provider_id
+        self._connection_model_id = model_id
+        cancel_event = Event()
+        worker = _ConnectionTestWorker(
+            self.provider_registry,
             provider_id,
-            api_key=api_key,
-            model=model_id,
-            http_client=http_client,
+            model_id,
+            api_key,
+            self.http_client,
+            cancel_event,
+            self.retry_sleep_fn,
         )
-        connection_test = getattr(provider, "test_connection", None)
-        if not callable(connection_test):
-            raise ProviderConfigurationError("선택한 제공자는 연결 테스트를 지원하지 않습니다.")
-        connection_test()
+        worker.signals.retry.connect(self._on_retry_progress)
+        worker.signals.finished.connect(self._on_connection_finished)
+        self._connection_cancel_event = cancel_event
+        self._connection_worker = worker
+        self._set_connection_test_running(True)
+        self.connection_status_label.setText(f"연결 테스트 중… ({provider_id} · {model_id})")
+        QtCore.QThreadPool.globalInstance().start(worker)
+
+    def _set_connection_test_running(self, running: bool) -> None:
+        for control in (
+            self.test_connection_button,
+            self.save_button,
+            self.provider_combo,
+            self.model_combo,
+            self.api_key_edit,
+            self.mock_mode_checkbox,
+            self.clear_key_button,
+        ):
+            control.setEnabled(not running)
+        self.connection_progress_bar.setVisible(running)
+        self.cancel_connection_button.setVisible(running)
+        self.cancel_connection_button.setEnabled(running)
+
+    def _on_retry_progress(self, retry_number: int, max_retries: int, _delay: float) -> None:
+        cancel_event = self._connection_cancel_event
+        if self._closing or (cancel_event is not None and cancel_event.is_set()):
+            return
+        self.connection_status_label.setText(
+            f"연결 테스트 중… ({self._connection_provider_id} · {self._connection_model_id}) · "
+            f"다시 시도 중 ({retry_number}/{max_retries})…"
+        )
+
+    def _cancel_connection_test(self) -> None:
+        if self._connection_cancel_event is None:
+            return
+        self._connection_cancel_event.set()
+        self.cancel_connection_button.setEnabled(False)
+        self.connection_status_label.setText("연결 테스트 취소 중… 완료되는 요청 결과는 무시합니다.")
+
+    def _on_connection_finished(self, succeeded: bool, message: str) -> None:
+        cancel_event = self._connection_cancel_event
+        cancelled = cancel_event is not None and cancel_event.is_set()
+        self._connection_worker = None
+        self._connection_cancel_event = None
+        if self._closing:
+            return
+        self._set_connection_test_running(False)
+        if cancelled:
+            self.connection_status_label.setText("연결 테스트가 취소되었습니다. 진행 중 요청 결과는 무시했습니다.")
+        elif succeeded:
+            self.connection_status_label.setText(message)
+        else:
+            self.connection_status_label.setText(f"연결 실패: {message}")
+
+    def reject(self) -> None:
+        self._closing = True
+        if self._connection_cancel_event is not None:
+            self._connection_cancel_event.set()
+        super().reject()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._closing = True
+        if self._connection_cancel_event is not None:
+            self._connection_cancel_event.set()
+        super().closeEvent(event)
 
     def _save(self) -> None:
         provider_id = self.provider_combo.currentText()
