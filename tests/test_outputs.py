@@ -107,6 +107,20 @@ def test_dashboard_reference_is_preserved_under_docs_design():
     assert "240px 사이드바" in html
 
 
+def test_dashboard_keeps_mock_label_and_formats_visible_dates(tmp_path):
+    repository = _repository(tmp_path)
+
+    manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
+
+    html = manifest.dashboard.read_text(encoding="utf-8")
+    assert "MOCK DATA · MARKETING WIKI" in html
+    assert "function formatDate(value" in html
+    assert "formatDate(h.contract_date)" in html
+    assert "formatDate(items[0].content.published_at" in html
+    assert "formatDate(content.published_at" in html
+    repository.close()
+
+
 def test_content_feed_filters_by_content_matched_product_only(tmp_path):
     repository = _repository(tmp_path)
 

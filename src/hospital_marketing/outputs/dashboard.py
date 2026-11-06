@@ -64,6 +64,7 @@ def render_dashboard(repository: Repository, output_path: Path) -> Path:
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text)}body{display:flex;min-height:100vh;font:15px/1.6 "Pretendard","Noto Sans KR",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
 .side{width:240px;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:auto;padding:16px 8px;background:var(--side);border-right:1px solid var(--line)}.ws{padding:6px 10px;font-weight:700;margin-bottom:12px}.side-link{display:flex;width:100%;gap:8px;align-items:center;padding:5px 10px;border:0;border-radius:4px;background:transparent;color:var(--text);text-align:left;font:inherit;font-size:14px;cursor:pointer}.side-link:hover,.side-link.on{background:var(--hover)}.side-link.on{font-weight:500}
 main{flex:1;min-width:0;padding:48px 24px 80px}.wrap{max-width:900px;margin:0 auto}.title-row{display:flex;gap:16px;align-items:flex-start}.emoji{font-size:48px;line-height:1}h1{font-size:36px;font-weight:700;margin:0;letter-spacing:-.5px}.desc{color:var(--sub);margin:4px 0 20px}.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:12px 0 24px}.tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--sub);font:inherit;font-size:14px;padding:6px 12px;cursor:pointer;margin-bottom:-1px}.tab:hover{background:var(--hover);border-radius:4px 4px 0 0}.tab.on{color:var(--text);border-bottom-color:var(--text);font-weight:500}
+.dataset-label{margin:0 0 12px;color:var(--sub);font:600 12px system-ui,sans-serif;letter-spacing:.16em}
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{min-width:0;border:1px solid var(--line);border-radius:6px;padding:14px 16px}.card-label{font-size:13px;color:var(--sub)}.card-value{font-size:26px;font-weight:700;margin:2px 0;letter-spacing:-.5px;overflow-wrap:anywhere}.tag{display:inline-block;margin:2px 4px 2px 0;padding:0 6px;border-radius:4px;font-size:12px;line-height:20px;font-weight:500;background:var(--blue-bg);color:var(--blue-tx)}.tag.green{background:var(--green-bg);color:var(--green-tx)}.tag.gray{background:var(--gray-bg);color:var(--gray-tx)}
 h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}.rows{display:flex;flex-direction:column;gap:4px}.rw{display:grid;grid-template-columns:112px 1fr 48px;align-items:center;gap:12px;padding:6px 8px;border-radius:4px}.rw.click{cursor:pointer}.rw:hover,.rw.on{background:var(--hover)}.rw-label{font-size:14px}.track{height:8px;background:var(--bar-soft);border-radius:2px;overflow:hidden}.fill{height:100%;background:var(--bar);border-radius:2px}.rw-count{text-align:right;color:var(--sub);font-size:13px}
 .tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}.tools input,.tools select{flex:1;min-width:150px;min-height:36px;border:1px solid var(--line);border-radius:4px;padding:5px 10px;background:var(--bg);color:var(--text);font:inherit;font-size:14px}.tools input:focus,.tools select:focus{outline:2px solid var(--sub);outline-offset:1px}.chip{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:4px;padding:3px 10px;font:inherit;font-size:13px;cursor:pointer}.chip:hover{background:var(--hover)}.chip.on{background:var(--text);color:var(--bg);border-color:var(--text)}
@@ -80,6 +81,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
   <button class="side-link" type="button" data-view="content">🎬 콘텐츠 피드</button>
 </nav>
 <main><div class="wrap">
+  <p class="dataset-label">MOCK DATA · MARKETING WIKI</p>
   <div class="title-row"><div class="emoji">🏥</div><div><h1>병원 거래처 대시보드</h1><p class="desc">병원·제품·온라인 마케팅 데이터를 한곳에서 확인합니다.</p></div></div>
   <div class="tabs" role="tablist" aria-label="대시보드 보기">
     <button class="tab on" type="button" role="tab" aria-selected="true" data-view="sales">💼 영업부</button>
@@ -118,6 +120,9 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
   let view = 'sales';
   let selectedRegion = '';
 
+  function formatDate(value, emptyLabel) {
+    return value ? value.slice(0, 10).replace(/-/g, '.') : (emptyLabel || '–');
+  }
   const el = (tag, className, value) => {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -226,7 +231,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     addOptions(tableHead, ['병원명', '지역', '계약일', '제품', '납품 내역']);
     tableBody.replaceChildren();
     for (const h of hospitals) {
-      const row = el('tr'); hospitalCell(row, h); cell(row, h.region); cell(row, h.contract_date); tags(row, h.products);
+      const row = el('tr'); hospitalCell(row, h); cell(row, h.region); cell(row, formatDate(h.contract_date)); tags(row, h.products);
       listCell(row, h.deliveries, (node, item) => { node.textContent = `${item.product_name} · 수량 ${item.quantity}`; });
       tableBody.append(row);
     }
@@ -263,7 +268,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
       })
       .sort((a, b) => (b.content.published_at || '').localeCompare(a.content.published_at || ''));
     const publishers = unique(items.map(item => item.hospital.hospital_id)).length;
-    const latest = items.length ? (items[0].content.published_at || '날짜 미입력') : '–';
+    const latest = items.length ? formatDate(items[0].content.published_at, '날짜 미입력') : '–';
     showCards([card('관련 콘텐츠', items.length, '건'), card('콘텐츠 등록 병원', publishers, '곳', 'green'), card('플랫폼', unique(items.map(item => item.content.platform)).length, '개', 'gray'), card('최근 게시', latest, '최신')]);
     bars('🎬 업로드 플랫폼', items.reduce((counts, item) => { const name = item.content.platform || '플랫폼 미입력'; counts[name] = (counts[name] || 0) + 1; return counts; }, {}), false, '건');
     tableHeading.textContent = '🎬 콘텐츠 피드 (최신순)';
@@ -272,7 +277,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
       const article = link('', content.url); article.className = 'vc';
       const thumb = el('div', 'thumb', '▶');
       const body = el('div', 'vb');
-      body.append(el('div', 'vt', content.title), el('div', 'vm', `${hospital.hospital_name} · ${content.platform} · ${(content.published_at || '날짜 미입력').replace(/-/g, '.')}`));
+      body.append(el('div', 'vt', content.title), el('div', 'vm', `${hospital.hospital_name} · ${content.platform} · ${formatDate(content.published_at, '날짜 미입력')}`));
       if (content.matched_product) body.append(el('span', 'tag', content.matched_product));
       article.append(thumb, body); feed.append(article);
     }
