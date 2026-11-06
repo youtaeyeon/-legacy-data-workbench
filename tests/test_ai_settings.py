@@ -1,4 +1,6 @@
+import json
 import os
+import time
 from threading import Event
 from typing import Any, cast
 
@@ -7,8 +9,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import httpx
 import pytest
 from PySide6 import QtCore, QtWidgets
+from PySide6.QtTest import QTest
 
 from hospital_marketing.ai.registry import ProviderRegistry
+from hospital_marketing.providers import ProviderRequestError
 from hospital_marketing.settings import SettingsStore
 from hospital_marketing.ui.settings_dialog import SettingsDialog
 
@@ -102,6 +106,7 @@ def _dialog(tmp_path, *, client=None, credentials=None, provider_registry=None, 
 
 def _wait_for_connection():
     assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QTest.qWait(550)
     QtWidgets.QApplication.processEvents()
 
 
@@ -358,9 +363,15 @@ def test_closing_settings_dialog_ignores_late_connection_result(tmp_path):
     assert "연결 성공" not in dialog.connection_status_label.text()
 
 
-def test_connection_test_without_key_does_not_send_http_request(tmp_path):
+def test_connection_test_without_key_does_not_send_http_request(tmp_path, monkeypatch):
     _app()
     client = FakeHttpClient()
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, title, text: warnings.append((title, text)),
+    )
     dialog = _dialog(tmp_path, client=client)
     dialog.provider_combo.setCurrentText("openai")
 
@@ -368,6 +379,7 @@ def test_connection_test_without_key_does_not_send_http_request(tmp_path):
 
     assert client.calls == []
     assert "API 키" in dialog.connection_status_label.text()
+    assert warnings and "저장" in warnings[0][1]
 
 
 def test_model_selector_has_recommendations_and_accepts_direct_input(tmp_path):
@@ -438,3 +450,172 @@ def test_settings_guide_explains_keys_mock_cost_and_privacy(tmp_path, monkeypatc
     assert "ai.google.dev/gemini-api/docs/models" in text
     assert "목업 모드" in text and "비용" in text
     assert "실제 회사 자료" in text
+
+
+def test_mock_provider_explains_that_no_external_connection_is_made(tmp_path, monkeypatch):
+    _app()
+    notices = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "information",
+        lambda _parent, title, text: notices.append((title, text)),
+    )
+    client = FakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.provider_combo.setCurrentText("mock")
+
+    dialog.test_connection_button.click()
+
+    assert client.calls == []
+    assert notices
+    assert "목업 모드" in notices[0][1]
+    assert "외부" in notices[0][1]
+    assert "목업 모드" in dialog.connection_status_label.text()
+    dialog.close()
+
+
+def test_missing_api_key_shows_prominent_save_or_input_guidance(tmp_path, monkeypatch):
+    _app()
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, title, text: warnings.append((title, text)),
+    )
+    client = FakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.provider_combo.setCurrentText("openai")
+
+    dialog.test_connection_button.click()
+
+    assert client.calls == []
+    assert warnings
+    assert "저장" in warnings[0][1]
+    assert "입력란" in warnings[0][1]
+    assert "API 키" in dialog.connection_status_label.text()
+    dialog.close()
+
+
+def test_invalid_model_shows_prominent_result_without_request(tmp_path, monkeypatch):
+    _app()
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, title, text: warnings.append((title, text)),
+    )
+    client = FakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.model_edit.setText("invalid model id")
+
+    dialog.test_connection_button.click()
+
+    assert client.calls == []
+    assert warnings
+    assert "모델 ID" in warnings[0][1]
+    dialog.close()
+
+
+def test_connection_request_keeps_progress_visible_for_at_least_half_second(tmp_path):
+    _app()
+    client = FakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("secret-test-key")
+    started_at = time.monotonic()
+
+    dialog.test_connection_button.click()
+
+    assert dialog.connection_progress_bar.isVisible()
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    assert len(client.calls) == 1
+    QtWidgets.QApplication.processEvents()
+    assert dialog.connection_progress_bar.isVisible()
+    QTest.qWait(550)
+    QtWidgets.QApplication.processEvents()
+
+    assert time.monotonic() - started_at >= 0.5
+    assert "연결 성공" in dialog.connection_status_label.text()
+    assert not dialog.connection_progress_bar.isVisible()
+    dialog.close()
+
+
+def test_connection_progress_bar_uses_explicit_contrast_colors(tmp_path):
+    _app()
+    dialog = _dialog(tmp_path)
+
+    style = dialog.connection_progress_bar.styleSheet()
+
+    assert "QProgressBar {" in style
+    assert "QProgressBar::chunk" in style
+    assert "#2b6cb8" in style
+    assert "#e9e3d3" in style
+    dialog.close()
+
+
+def test_connection_failure_logs_sanitized_details_and_opens_details_view(tmp_path, monkeypatch):
+    _app()
+    fake_key = "test-key-for-redaction"
+
+    class FailingProvider:
+        def __init__(self, api_key):
+            self.api_key = api_key
+
+        def test_connection(self):
+            raise ProviderRequestError(f"HTTP 503 Authorization: Bearer {self.api_key}")
+
+    registry = ProviderRegistry(
+        providers=cast(
+            Any,
+            {
+                "mock": lambda **_kwargs: None,
+                "openai": lambda **kwargs: FailingProvider(kwargs["api_key"]),
+            },
+        )
+    )
+    dialog = _dialog(
+        tmp_path,
+        client=object(),
+        provider_registry=registry,
+        retry_sleep_fn=lambda _delay: None,
+    )
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText(fake_key)
+
+    dialog.test_connection_button.click()
+    _wait_for_connection()
+
+    log_path = tmp_path / "reports" / "ai-connection-errors.jsonl"
+    assert log_path.is_file()
+    entry = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["provider_id"] == "openai"
+    assert entry["model_id"] == "gpt-6-luna"
+    assert entry["status_code"] == 503
+    assert "HTTP 503" in entry["message"]
+    assert fake_key not in log_path.read_text(encoding="utf-8")
+
+    details_button = getattr(dialog, "error_details_button", None)
+    assert details_button is not None
+    assert not details_button.isHidden()
+    details = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "information",
+        lambda _parent, title, text: details.append((title, text)),
+    )
+    details_button.click()
+    assert details
+    assert "HTTP 503" in details[0][1]
+    assert fake_key not in details[0][1]
+    dialog.close()

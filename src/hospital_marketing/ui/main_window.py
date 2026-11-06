@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..documents import SUPPORTED_EXTENSIONS
 from ..providers import ProviderConfigurationError, ProviderRequestError
 from ..settings import AppSettings, SettingsStore
+from ..version import APP_VERSION
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
 
@@ -31,7 +32,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.workflow = workflow
         self.open_path = open_path or self._open_local_path
         self.dashboard_path: Path | None = None
-        self.setWindowTitle("병원 마케팅 위키 MVP")
+        self.setWindowTitle(f"병원 마케팅 위키 MVP · v{APP_VERSION}")
         self.resize(900, 500)
         self.setMinimumWidth(780)
 

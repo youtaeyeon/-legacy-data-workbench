@@ -1,4 +1,5 @@
 from pathlib import Path
+from PyInstaller.utils.hooks import copy_metadata
 
 project_root = Path(SPECPATH)
 source = project_root / "src"
@@ -6,7 +7,7 @@ a = Analysis(
     [str(source / "hospital_marketing_launcher.py")],
     pathex=[str(source)],
     binaries=[],
-    datas=[],
+    datas=copy_metadata("hospital-marketing-mvp"),
     hiddenimports=["keyring.backends.Windows"],
     hookspath=[],
     hooksconfig={},

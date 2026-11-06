@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import datetime, timezone
+import json
+import math
+from pathlib import Path
+import re
 from threading import Event
+import time
 from typing import Any
 
 import httpx
@@ -13,6 +19,27 @@ from ..ai.registry import ProviderRegistry
 from ..credentials import CredentialStore, CredentialStoreError
 from ..providers import ProviderConfigurationError, ProviderRequestError
 from ..settings import SettingsStore
+
+
+MIN_CONNECTION_PROGRESS_SECONDS = 0.5
+CONNECTION_ERROR_LOG_NAME = "ai-connection-errors.jsonl"
+
+
+def _sanitize_connection_error(message: str, api_key: str) -> str:
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
+    message = re.sub(
+        r"(?i)\b(?:authorization|x-api-key|x-goog-api-key)\s*[:=]\s*(?:bearer\s+)?\S+",
+        "[REDACTED HEADER]",
+        message,
+    )
+    message = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [REDACTED]", message)
+    return " ".join(message.split())[:1000]
+
+
+def _provider_status_code(message: str) -> int | None:
+    match = re.search(r"\bHTTP\s+(\d{3})\b", message, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 class _CancellationAwareHttpClient:
@@ -115,7 +142,7 @@ class _ConnectionTestWorker(QtCore.QRunnable):
                 self.cancel_event,
             )
         except (ProviderConfigurationError, ProviderRequestError) as exc:
-            self.signals.finished.emit(False, str(exc))
+            self.signals.finished.emit(False, _sanitize_connection_error(str(exc), self.api_key))
         except Exception:
             self.signals.finished.emit(False, "연결 테스트 중 오류가 발생했습니다. 설정과 네트워크를 확인하세요.")
         else:
@@ -142,6 +169,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self._connection_cancel_event: Event | None = None
         self._connection_provider_id = ""
         self._connection_model_id = ""
+        self._connection_api_key = ""
+        self._connection_started_at: float | None = None
+        self._pending_connection_result: tuple[bool, str] | None = None
+        self._last_connection_error: dict[str, Any] | None = None
+        self._connection_error_log_path: Path | None = None
         self._closing = False
         settings = settings_store.load()
         self.setWindowTitle("AI 제공자 설정")
@@ -213,7 +245,23 @@ class SettingsDialog(QtWidgets.QDialog):
         self.connection_progress_bar.setRange(0, 0)
         self.connection_progress_bar.setTextVisible(False)
         self.connection_progress_bar.setVisible(False)
+        self.connection_progress_bar.setStyleSheet("""
+            QProgressBar {
+                min-height: 12px;
+                border: 1px solid #5f666d;
+                border-radius: 4px;
+                background: #e9e3d3;
+            }
+            QProgressBar::chunk {
+                background: #2b6cb8;
+            }
+        """)
         layout.addWidget(self.connection_progress_bar)
+        self.error_details_button = QtWidgets.QPushButton("오류 자세히 보기")
+        self.error_details_button.setObjectName("connection_error_details_button")
+        self.error_details_button.setVisible(False)
+        self.error_details_button.clicked.connect(self._show_connection_error_details)
+        layout.addWidget(self.error_details_button)
 
         buttons = QtWidgets.QHBoxLayout()
         self.clear_key_button = QtWidgets.QPushButton("선택 제공자 키 삭제")
@@ -297,13 +345,18 @@ class SettingsDialog(QtWidgets.QDialog):
             return
         provider_id = self.provider_combo.currentText()
         if provider_id == "mock":
-            self.connection_status_label.setText("목업 모드는 외부 연결을 사용하지 않습니다.")
+            message = "목업 모드는 외부 AI API에 연결하지 않습니다. 실제 연결을 테스트하려면 제공자를 선택하세요."
+            self.message_label.setText(message)
+            self.connection_status_label.setText(message)
+            QtWidgets.QMessageBox.information(self, "목업 모드", message)
             return
 
         model_id = self.model_combo.currentText().strip()
         validation_error = model_id_error(provider_id, model_id)
         if validation_error:
             self.connection_status_label.setText(f"연결 테스트를 시작할 수 없습니다. {validation_error}")
+            self.message_label.setText(validation_error)
+            QtWidgets.QMessageBox.warning(self, "모델 설정 확인", validation_error)
             return
 
         api_key = self.api_key_edit.text().strip()
@@ -312,13 +365,24 @@ class SettingsDialog(QtWidgets.QDialog):
                 api_key = self.credential_store.get(provider_id) or ""
         except CredentialStoreError as exc:
             self.connection_status_label.setText(f"연결 실패: {exc}")
+            self.message_label.setText(str(exc))
+            QtWidgets.QMessageBox.warning(self, "API 키 확인", str(exc))
             return
         if not api_key:
-            self.connection_status_label.setText("API 키가 없습니다. 키를 입력하거나 제공자 키를 저장해 주세요.")
+            message = "API 키가 없습니다. 키를 입력한 뒤 저장하거나, 입력란에 키를 입력한 상태로 테스트하세요."
+            self.connection_status_label.setText(message)
+            self.message_label.setText(message)
+            QtWidgets.QMessageBox.warning(self, "API 키 확인", message)
             return
 
         self._connection_provider_id = provider_id
         self._connection_model_id = model_id
+        self._connection_api_key = api_key
+        self._connection_started_at = time.monotonic()
+        self._pending_connection_result = None
+        self._last_connection_error = None
+        self._connection_error_log_path = None
+        self.error_details_button.setVisible(False)
         cancel_event = Event()
         worker = _ConnectionTestWorker(
             self.provider_registry,
@@ -369,19 +433,101 @@ class SettingsDialog(QtWidgets.QDialog):
         self.connection_status_label.setText("연결 테스트 취소 중… 완료되는 요청 결과는 무시합니다.")
 
     def _on_connection_finished(self, succeeded: bool, message: str) -> None:
+        if self._closing:
+            self._connection_worker = None
+            self._connection_cancel_event = None
+            self._connection_api_key = ""
+            self._pending_connection_result = None
+            return
+        self._pending_connection_result = (succeeded, message)
+        elapsed = (
+            time.monotonic() - self._connection_started_at
+            if self._connection_started_at is not None
+            else MIN_CONNECTION_PROGRESS_SECONDS
+        )
+        remaining = MIN_CONNECTION_PROGRESS_SECONDS - elapsed
+        if remaining > 0:
+            QtCore.QTimer.singleShot(math.ceil(remaining * 1000), self._complete_pending_connection_test)
+            return
+        self._complete_pending_connection_test()
+
+    def _complete_pending_connection_test(self) -> None:
+        result = self._pending_connection_result
+        if result is None:
+            return
+        if self._closing:
+            self._connection_worker = None
+            self._connection_cancel_event = None
+            self._connection_api_key = ""
+            self._connection_started_at = None
+            self._pending_connection_result = None
+            return
+        succeeded, message = result
+        self._pending_connection_result = None
         cancel_event = self._connection_cancel_event
         cancelled = cancel_event is not None and cancel_event.is_set()
+        api_key = self._connection_api_key
         self._connection_worker = None
         self._connection_cancel_event = None
-        if self._closing:
-            return
+        self._connection_api_key = ""
+        self._connection_started_at = None
         self._set_connection_test_running(False)
         if cancelled:
             self.connection_status_label.setText("연결 테스트가 취소되었습니다. 진행 중 요청 결과는 무시했습니다.")
         elif succeeded:
             self.connection_status_label.setText(message)
         else:
-            self.connection_status_label.setText(f"연결 실패: {message}")
+            safe_message = _sanitize_connection_error(message, api_key)
+            self.connection_status_label.setText(f"연결 실패: {safe_message}")
+            self._record_connection_failure(safe_message)
+
+    def _get_connection_error_log_path(self) -> Path:
+        settings = self.settings_store.load()
+        base_dir = settings.target_dir or self.settings_store.path.parent
+        return base_dir / "reports" / CONNECTION_ERROR_LOG_NAME
+
+    def _record_connection_failure(self, message: str) -> None:
+        record = {
+            "occurred_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "provider_id": self._connection_provider_id,
+            "model_id": self._connection_model_id,
+            "status_code": _provider_status_code(message),
+            "message": message,
+        }
+        self._last_connection_error = record
+        try:
+            path = self._get_connection_error_log_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._connection_error_log_path = path
+        except OSError:
+            self._connection_error_log_path = None
+            self.connection_status_label.setText(
+                f"{self.connection_status_label.text()} · 오류 로그를 저장하지 못했습니다."
+            )
+        self.error_details_button.setVisible(True)
+
+    def _show_connection_error_details(self) -> None:
+        record = self._last_connection_error
+        if record is None:
+            return
+        status_code = record["status_code"]
+        status_text = f"HTTP {status_code}" if status_code is not None else "제공자 상태 코드 없음"
+        log_text = (
+            f"\n\n로그 파일: {self._connection_error_log_path}"
+            if self._connection_error_log_path is not None
+            else "\n\n로그 파일을 저장하지 못했습니다."
+        )
+        details = (
+            f"시각: {record['occurred_at']}\n"
+            f"제공자: {record['provider_id']}\n"
+            f"모델: {record['model_id']}\n"
+            f"상태: {status_text}\n"
+            f"오류: {record['message']}"
+            f"{log_text}"
+        )
+        QtWidgets.QMessageBox.information(self, "연결 오류 자세히 보기", details)
 
     def reject(self) -> None:
         self._closing = True
