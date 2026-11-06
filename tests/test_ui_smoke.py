@@ -397,6 +397,36 @@ def test_path_guide_button_explains_source_target_and_date_order(tmp_path, monke
     window.close()
 
 
+def test_path_guide_is_small_circled_question_icon_at_group_top_right(tmp_path):
+    _app()
+    window = MainWindow(
+        SettingsStore(tmp_path / "settings.json"),
+        FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"),
+    )
+    window.show()
+    QtWidgets.QApplication.processEvents()
+
+    button = window.path_guide_button
+    group = window.paths_group
+    assert isinstance(button, QtWidgets.QToolButton)
+    assert button.parent() is group
+    assert button.text() == "?"
+    assert button.accessibleName() == "경로 안내"
+    assert "사용법" in button.toolTip()
+    assert button.width() <= 24 and button.height() <= 24
+    assert button.width() == button.height()
+    assert button.y() <= 4
+    assert group.width() - button.geometry().right() <= 24
+    assert not any(
+        b.text() == "경로 안내" for b in window.findChildren(QtWidgets.QPushButton)
+    )
+
+    window.resize(window.width() + 300, window.height())
+    QtWidgets.QApplication.processEvents()
+    assert group.width() - button.geometry().right() <= 24
+    window.close()
+
+
 def test_run_error_never_displays_secret_from_exception(tmp_path):
     _app()
 
