@@ -112,6 +112,17 @@ def test_settings_dialog_saves_provider_and_key_to_separate_stores(tmp_path, mon
     assert "secret-ui-key" not in settings_store.path.read_text(encoding="utf-8")
 
 
+def test_settings_dialog_preserves_enabled_extensions_when_saving(tmp_path):
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(enabled_extensions=(".xlsx",)))
+    dialog = SettingsDialog(settings_store, CredentialStore(), ProviderRegistry())
+
+    dialog.save_button.click()
+
+    assert settings_store.load().enabled_extensions == (".xlsx",)
+
+
 def test_main_window_groups_paths_and_highlights_primary_action(tmp_path):
     _app()
     window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"))

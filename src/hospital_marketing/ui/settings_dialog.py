@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6 import QtWidgets
 
 from ..ai.registry import ProviderRegistry
 from ..credentials import CredentialStore, CredentialStoreError
-from ..settings import AppSettings, SettingsStore
+from ..settings import SettingsStore
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -72,9 +74,8 @@ class SettingsDialog(QtWidgets.QDialog):
             if api_key:
                 self.credential_store.set(provider_id, api_key)
             current = self.settings_store.load()
-            self.settings_store.save(AppSettings(
-                source_dir=current.source_dir,
-                target_dir=current.target_dir,
+            self.settings_store.save(replace(
+                current,
                 provider_id=provider_id,
                 model_id=self.model_edit.text().strip(),
                 mock_mode=self.mock_mode_checkbox.isChecked(),
