@@ -12,6 +12,7 @@ from PySide6 import QtCore, QtWidgets
 from hospital_marketing.ai.registry import ProviderRegistry
 from hospital_marketing.credentials import CredentialStore
 from hospital_marketing.outputs.generate import OutputManifest
+from hospital_marketing.providers import ProviderRequestError
 from hospital_marketing.report import ImportReport
 from hospital_marketing.settings import AppSettings, SettingsStore
 from hospital_marketing.ui.main_window import MainWindow
@@ -415,8 +416,6 @@ def test_run_error_never_displays_secret_from_exception(tmp_path):
 
 
 def test_provider_error_disables_dashboard_export_when_previous_dashboard_exists(tmp_path):
-    from hospital_marketing.providers import ProviderRequestError
-
     _app()
     source = tmp_path / "source"
     target = tmp_path / "target"
@@ -436,6 +435,27 @@ def test_provider_error_disables_dashboard_export_when_previous_dashboard_exists
 
     assert not window.open_dashboard_button.isEnabled()
     assert not window.export_dashboard_button.isEnabled()
+    window.close()
+
+
+def test_provider_error_shows_cause_and_mock_mode_fallback(tmp_path):
+    _app()
+
+    class ProviderFailingWorkflow:
+        def run(self, *args, **kwargs):
+            raise ProviderRequestError("AI 모델을 찾을 수 없습니다. 모델 ID를 확인해 주세요.")
+
+    window = MainWindow(
+        SettingsStore(tmp_path / "settings.json"),
+        cast(ImportWorkflow, ProviderFailingWorkflow()),
+    )
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(tmp_path / "target"))
+
+    window.run_button.click()
+
+    assert "AI 모델을 찾을 수 없습니다" in window.status_label.text()
+    assert "목업 모드로 다시 실행" in window.status_label.text()
     window.close()
 
 
