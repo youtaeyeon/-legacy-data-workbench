@@ -1,5 +1,7 @@
 import json
 from datetime import date, datetime
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 from openpyxl import load_workbook
 
@@ -51,6 +53,21 @@ def test_generates_standalone_filterable_html_without_irrelevant_content(tmp_pat
     assert "<script src=" not in html
     assert 'rel="stylesheet" href=' not in html
     assert "example.test/content/1" in html
+
+    class LocalAssetParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.local_references = []
+
+        def handle_starttag(self, tag, attrs):
+            for key, value in attrs:
+                if key in {"src", "href"} and value:
+                    if not urlsplit(value).scheme and not value.startswith("#"):
+                        self.local_references.append(value)
+
+    parser = LocalAssetParser()
+    parser.feed(html)
+    assert parser.local_references == []
     repository.close()
 
 
