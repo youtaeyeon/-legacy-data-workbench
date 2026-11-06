@@ -15,5 +15,6 @@ demo-settings.json
 *.db
 *.db-shm
 *.db-wal
+*.egg-info/
 .superpowers/
 demo-settings-win.json
