@@ -1,10 +1,13 @@
 import os
+import re
 from pathlib import Path
+from typing import cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import keyring
-from PySide6 import QtWidgets
+import pytest
+from PySide6 import QtCore, QtWidgets
 
 from hospital_marketing.ai.registry import ProviderRegistry
 from hospital_marketing.credentials import CredentialStore
@@ -13,7 +16,7 @@ from hospital_marketing.report import ImportReport
 from hospital_marketing.settings import AppSettings, SettingsStore
 from hospital_marketing.ui.main_window import MainWindow
 from hospital_marketing.ui.settings_dialog import SettingsDialog
-from hospital_marketing.workflow import WorkflowResult
+from hospital_marketing.workflow import ImportWorkflow, WorkflowResult
 
 
 _APP = None
@@ -76,6 +79,7 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     assert "읽을 파일이 없습니다" in window.status_label.text()
     assert "신규 2" in window.status_label.text()
     assert window.open_dashboard_button.isEnabled()
+    assert window.export_dashboard_button.isEnabled()
 
 
 def test_open_dashboard_uses_injected_open_handler(tmp_path):
@@ -91,6 +95,155 @@ def test_open_dashboard_uses_injected_open_handler(tmp_path):
     window.open_dashboard_button.click()
 
     assert opened == [dashboard]
+
+
+def test_dashboard_export_button_is_disabled_without_dashboard(tmp_path):
+    _app()
+    window = MainWindow(
+        SettingsStore(tmp_path / "settings.json"),
+        FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"),
+    )
+
+    assert not window.export_dashboard_button.isEnabled()
+    window.close()
+
+
+def test_dashboard_export_copies_standalone_html_with_date_name_and_extension(tmp_path, monkeypatch):
+    _app()
+    target = tmp_path / "target"
+    dashboard = target / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text("<!doctype html><p>single file</p>", encoding="utf-8")
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(target_dir=target))
+    documents = tmp_path / "내 문서 폴더"
+    destination_without_extension = tmp_path / "공유 폴더" / "병원 마케팅 대시보드"
+    destination_without_extension.parent.mkdir()
+    dialog_call = {}
+
+    def choose_destination(_parent, title, initial_path, file_filter):
+        dialog_call.update(title=title, initial_path=initial_path, file_filter=file_filter)
+        return str(destination_without_extension), "HTML 파일 (*.html)"
+
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", choose_destination)
+    monkeypatch.setattr(QtCore.QStandardPaths, "writableLocation", lambda *_args: str(documents))
+    window = MainWindow(settings, FakeWorkflow(dashboard))
+
+    window.export_dashboard_button.click()
+
+    exported = destination_without_extension.with_suffix(".html")
+    assert exported.read_text(encoding="utf-8") == dashboard.read_text(encoding="utf-8")
+    assert dialog_call["title"] == "대시보드 HTML 내보내기"
+    assert dialog_call["file_filter"] == "HTML 파일 (*.html)"
+    assert Path(dialog_call["initial_path"]).parent == documents
+    assert re.fullmatch(r"병원마케팅대시보드_\d{8}\.html", Path(dialog_call["initial_path"]).name)
+    assert str(exported) in window.status_label.text()
+    assert "외부 공유 전에 실제 회사 자료가 포함되지 않았는지 확인하세요" in window.status_label.text()
+    window.close()
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_content"),
+    [
+        (QtWidgets.QMessageBox.StandardButton.Yes, "<!doctype html><p>new</p>"),
+        (QtWidgets.QMessageBox.StandardButton.No, "old file"),
+    ],
+)
+def test_dashboard_export_confirms_before_overwriting(tmp_path, monkeypatch, answer, expected_content):
+    _app()
+    target = tmp_path / "target"
+    dashboard = target / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text("<!doctype html><p>new</p>", encoding="utf-8")
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(target_dir=target))
+    destination = tmp_path / "공유 폴더" / "이미 있는 대시보드.html"
+    destination.parent.mkdir()
+    destination.write_text("old file", encoding="utf-8")
+    confirmations = []
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: (str(destination), "HTML 파일 (*.html)"),
+    )
+
+    def confirm_overwrite(_parent, title, message, buttons, default):
+        confirmations.append((title, message, buttons, default))
+        return answer
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", confirm_overwrite)
+    window = MainWindow(settings, FakeWorkflow(dashboard))
+
+    window.export_dashboard_button.click()
+
+    assert len(confirmations) == 1
+    assert "덮어쓰기" in confirmations[0][0]
+    assert confirmations[0][3] == QtWidgets.QMessageBox.StandardButton.No
+    assert destination.read_text(encoding="utf-8") == expected_content
+    window.close()
+
+
+def test_dashboard_export_rejects_explicit_non_html_extension_without_renaming(tmp_path, monkeypatch):
+    _app()
+    target = tmp_path / "target"
+    dashboard = target / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text("<!doctype html><p>new</p>", encoding="utf-8")
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(target_dir=target))
+    destination_dir = tmp_path / "공유 폴더"
+    destination_dir.mkdir()
+    requested_pdf = destination_dir / "report.pdf"
+    existing_html = destination_dir / "report.html"
+    existing_html.write_text("keep this file", encoding="utf-8")
+    confirmations = []
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: (str(requested_pdf), "HTML 파일 (*.html)"),
+    )
+
+    def confirm_overwrite(*args):
+        confirmations.append(args)
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", confirm_overwrite)
+    window = MainWindow(settings, FakeWorkflow(dashboard))
+
+    window.export_dashboard_button.click()
+
+    assert confirmations == []
+    assert not requested_pdf.exists()
+    assert existing_html.read_text(encoding="utf-8") == "keep this file"
+    assert ".html" in window.status_label.text()
+    window.close()
+
+
+def test_dashboard_export_does_not_copy_dashboard_onto_itself(tmp_path, monkeypatch):
+    _app()
+    target = tmp_path / "target"
+    dashboard = target / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text("<!doctype html><p>original</p>", encoding="utf-8")
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(target_dir=target))
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args: (str(dashboard), "HTML 파일 (*.html)"),
+    )
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args: pytest.fail("원본 대시보드에는 덮어쓰기 확인이 필요하지 않습니다."),
+    )
+    window = MainWindow(settings, FakeWorkflow(dashboard))
+
+    window.export_dashboard_button.click()
+
+    assert dashboard.read_text(encoding="utf-8") == "<!doctype html><p>original</p>"
+    assert "이미 대시보드 HTML입니다" in window.status_label.text()
+    window.close()
 
 
 def test_settings_dialog_saves_provider_and_key_to_separate_stores(tmp_path, monkeypatch):
@@ -258,6 +411,31 @@ def test_run_error_never_displays_secret_from_exception(tmp_path):
 
     assert "secret-test-value" not in window.status_label.text()
     assert window.status_label.text() == "처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요."
+    window.close()
+
+
+def test_provider_error_disables_dashboard_export_when_previous_dashboard_exists(tmp_path):
+    from hospital_marketing.providers import ProviderRequestError
+
+    _app()
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    dashboard = target / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text("<html></html>", encoding="utf-8")
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(source_dir=source, target_dir=target))
+
+    class ProviderFailingWorkflow:
+        def run(self, *args, **kwargs):
+            raise ProviderRequestError("provider request failed")
+
+    window = MainWindow(settings_store, cast(ImportWorkflow, ProviderFailingWorkflow()))
+    assert window.export_dashboard_button.isEnabled()
+    window.run_button.click()
+
+    assert not window.open_dashboard_button.isEnabled()
+    assert not window.export_dashboard_button.isEnabled()
     window.close()
 
 
