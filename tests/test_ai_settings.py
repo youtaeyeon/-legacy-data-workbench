@@ -1,10 +1,12 @@
 import os
+from threading import Event
+from typing import Any, cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import httpx
 import pytest
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from hospital_marketing.ai.registry import ProviderRegistry
 from hospital_marketing.settings import SettingsStore
@@ -73,13 +75,34 @@ class FakeHttpClient:
         return self.response
 
 
-def _dialog(tmp_path, *, client=None, credentials=None):
+class BlockingFakeHttpClient(FakeHttpClient):
+    def __init__(self):
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+
+    def post(self, url, *, headers, json):
+        self.calls.append((url, headers, json))
+        self.started.set()
+        self.release.wait(timeout=0.5)
+        return self.response
+
+
+def _dialog(tmp_path, *, client=None, credentials=None, provider_registry=None, retry_sleep_fn=None):
+    options = {"http_client": client}
+    if retry_sleep_fn is not None:
+        options["retry_sleep_fn"] = retry_sleep_fn
     return SettingsDialog(
         SettingsStore(tmp_path / "settings.json"),
         credentials or FakeCredentials(),
-        ProviderRegistry(),
-        http_client=client,
+        provider_registry or ProviderRegistry(),
+        **options,
     )
+
+
+def _wait_for_connection():
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
 
 
 @pytest.mark.parametrize(
@@ -100,11 +123,15 @@ def test_connection_test_reports_http_status_without_exposing_key(tmp_path, stat
     dialog.api_key_edit.setText("secret-test-key")
 
     dialog.test_connection_button.click()
+    _wait_for_connection()
 
     assert len(client.calls) == 1
     assert expected in dialog.connection_status_label.text()
     assert "secret-test-key" not in dialog.connection_status_label.text()
     assert "secret-test-key" not in dialog.message_label.text()
+    assert dialog.test_connection_button.isEnabled()
+    assert dialog.save_button.isEnabled()
+    assert not dialog.connection_progress_bar.isVisible()
 
 
 @pytest.mark.parametrize(
@@ -114,17 +141,19 @@ def test_connection_test_reports_http_status_without_exposing_key(tmp_path, stat
         (httpx.ConnectError("fake network error", request=httpx.Request("POST", "https://api.openai.com")), "네트워크"),
     ],
 )
-def test_connection_test_distinguishes_timeout_and_network_errors(tmp_path, monkeypatch, error, expected):
+def test_connection_test_distinguishes_timeout_and_network_errors(tmp_path, error, expected):
     _app()
-    monkeypatch.setattr("hospital_marketing.ai.adapters.base.time.sleep", lambda _delay: None)
     client = FakeHttpClient(error=error)
-    dialog = _dialog(tmp_path, client=client)
+    sleep_calls = []
+    dialog = _dialog(tmp_path, client=client, retry_sleep_fn=sleep_calls.append)
     dialog.provider_combo.setCurrentText("openai")
     dialog.api_key_edit.setText("secret-test-key")
 
     dialog.test_connection_button.click()
+    _wait_for_connection()
 
     assert len(client.calls) == 2
+    assert len(sleep_calls) == 1
     assert expected in dialog.connection_status_label.text()
     assert "한 차례 재시도" in dialog.connection_status_label.text()
     assert "secret-test-key" not in dialog.connection_status_label.text()
@@ -140,6 +169,7 @@ def test_connection_test_uses_saved_key_without_showing_it(tmp_path):
     assert "저장됨" in dialog.key_status_label.text()
     assert "secret-test-key" not in dialog.key_status_label.text()
     dialog.test_connection_button.click()
+    _wait_for_connection()
 
     assert len(client.calls) == 1
     assert client.calls[0][1]["Authorization"] == "Bearer secret-test-key"
@@ -155,9 +185,177 @@ def test_connection_test_closes_its_real_client_owner(tmp_path, monkeypatch):
     dialog.api_key_edit.setText("secret-test-key")
 
     dialog.test_connection_button.click()
+    _wait_for_connection()
 
     assert len(client.calls) == 1
     assert client.closed is True
+
+
+def test_connection_test_runs_in_background_and_restores_controls(tmp_path):
+    _app()
+    client = BlockingFakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("secret-test-key")
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+
+    dialog.test_connection_button.click()
+
+    assert client.started.wait(timeout=1)
+    assert "연결 테스트 중" in dialog.connection_status_label.text()
+    assert "openai" in dialog.connection_status_label.text()
+    assert "gpt-6-luna" in dialog.connection_status_label.text()
+    assert not dialog.test_connection_button.isEnabled()
+    assert not dialog.save_button.isEnabled()
+    assert not dialog.provider_combo.isEnabled()
+    assert not dialog.model_combo.isEnabled()
+    assert dialog.connection_progress_bar.isVisible()
+    assert dialog.connection_progress_bar.minimum() == 0
+    assert dialog.connection_progress_bar.maximum() == 0
+    assert dialog.cancel_connection_button.isVisible()
+
+    client.release.set()
+    _wait_for_connection()
+
+    assert "연결 성공" in dialog.connection_status_label.text()
+    assert dialog.test_connection_button.isEnabled()
+    assert dialog.save_button.isEnabled()
+    assert dialog.provider_combo.isEnabled()
+    assert dialog.model_combo.isEnabled()
+    assert not dialog.connection_progress_bar.isVisible()
+    assert not dialog.cancel_connection_button.isVisible()
+    dialog.close()
+
+
+def test_connection_test_displays_retry_progress_from_worker(tmp_path):
+    _app()
+    started = Event()
+    release = Event()
+
+    class RetryReportingProvider:
+        def __init__(self, on_retry):
+            self.on_retry = on_retry
+
+        def test_connection(self):
+            self.on_retry(2, 3, 2.0)
+            started.set()
+            release.wait(timeout=0.5)
+
+    registry = ProviderRegistry(
+        providers=cast(
+            Any,
+            {
+                "mock": lambda **_kwargs: None,
+                "openai": lambda **kwargs: RetryReportingProvider(kwargs["on_retry"]),
+            },
+        )
+    )
+    dialog = _dialog(tmp_path, client=object(), provider_registry=registry)
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("secret-test-key")
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+
+    dialog.test_connection_button.click()
+
+    assert started.wait(timeout=1)
+    QtWidgets.QApplication.processEvents()
+    assert "다시 시도 중 (2/3)" in dialog.connection_status_label.text()
+    assert "openai" in dialog.connection_status_label.text()
+    assert "gpt-6-luna" in dialog.connection_status_label.text()
+    assert dialog.connection_progress_bar.isVisible()
+
+    release.set()
+    _wait_for_connection()
+    assert "연결 성공" in dialog.connection_status_label.text()
+    dialog.close()
+
+
+def test_cancel_during_retry_backoff_prevents_followup_request(tmp_path):
+    _app()
+    retry_started = Event()
+    followup_requests = []
+
+    class RetryingProvider:
+        def __init__(self, on_retry, sleep_fn):
+            self.on_retry = on_retry
+            self.sleep_fn = sleep_fn
+
+        def test_connection(self):
+            self.on_retry(1, 3, 5.0)
+            retry_started.set()
+            self.sleep_fn(5.0)
+            followup_requests.append("sent")
+
+    registry = ProviderRegistry(
+        providers=cast(
+            Any,
+            {
+                "mock": lambda **_kwargs: None,
+                "openai": lambda **kwargs: RetryingProvider(kwargs["on_retry"], kwargs["sleep_fn"]),
+            },
+        )
+    )
+    dialog = _dialog(tmp_path, client=object(), provider_registry=registry)
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("secret-test-key")
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.test_connection_button.click()
+
+    assert retry_started.wait(timeout=1)
+    dialog.cancel_connection_button.click()
+    _wait_for_connection()
+
+    assert followup_requests == []
+    assert "취소" in dialog.connection_status_label.text()
+    dialog.close()
+
+
+def test_cancel_connection_test_ignores_result_and_restores_controls(tmp_path):
+    _app()
+    client = BlockingFakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("secret-test-key")
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.test_connection_button.click()
+
+    assert client.started.wait(timeout=1)
+    dialog.cancel_connection_button.click()
+    assert "취소" in dialog.connection_status_label.text()
+
+    client.release.set()
+    _wait_for_connection()
+
+    assert "취소" in dialog.connection_status_label.text()
+    assert "연결 성공" not in dialog.connection_status_label.text()
+    assert dialog.test_connection_button.isEnabled()
+    assert dialog.save_button.isEnabled()
+    assert not dialog.connection_progress_bar.isVisible()
+    dialog.close()
+
+
+def test_closing_settings_dialog_ignores_late_connection_result(tmp_path):
+    _app()
+    client = BlockingFakeHttpClient()
+    dialog = _dialog(tmp_path, client=client)
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("secret-test-key")
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.test_connection_button.click()
+
+    assert client.started.wait(timeout=1)
+    dialog.reject()
+    assert not dialog.isVisible()
+
+    client.release.set()
+    _wait_for_connection()
+
+    assert "연결 성공" not in dialog.connection_status_label.text()
 
 
 def test_connection_test_without_key_does_not_send_http_request(tmp_path):
