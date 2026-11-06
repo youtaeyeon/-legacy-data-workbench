@@ -68,6 +68,35 @@ def test_duplicate_ids_are_rejected_without_guessing_but_valid_rows_import(tmp_p
     repository.close()
 
 
+def test_later_snapshot_overwrites_hospital_fields_from_earlier_file(tmp_path):
+    source = tmp_path / "source"
+    older = source / "20261102"
+    newer = source / "20261103"
+    older.mkdir(parents=True)
+    newer.mkdir()
+    for folder, hospital_name, region in (
+        (older, "목업 병원 이전 이름", "가상권역 A"),
+        (newer, "목업 병원 최신 이름", "가상권역 B"),
+    ):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Hospitals"
+        sheet.append(("hospital_id", "hospital_name", "region"))
+        sheet.append(("MOCK-SNAPSHOT", hospital_name, region))
+        workbook.save(folder / "hospitals.xlsx")
+    repository, service = _service(tmp_path)
+
+    report = service.import_folder(source)
+
+    hospital = repository.get_hospital("MOCK-SNAPSHOT")
+    assert (report.inserted_count, report.updated_count, report.unchanged_count) == (1, 1, 0)
+    assert report.issues == []
+    assert hospital is not None
+    assert hospital.hospital_name == "목업 병원 최신 이름"
+    assert hospital.region == "가상권역 B"
+    repository.close()
+
+
 def test_missing_id_and_invalid_date_are_reported_without_importing_bad_rows(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
