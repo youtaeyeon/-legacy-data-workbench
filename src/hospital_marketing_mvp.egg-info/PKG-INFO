@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: hospital-marketing-mvp
+Version: 0.1.0
+Summary: Mock-data MVP for hospital marketing knowledge workflows
+Requires-Python: <3.15,>=3.12
+Requires-Dist: openpyxl<4,>=3.1
+Requires-Dist: keyring<27,>=25
+Requires-Dist: httpx<1,>=0.27
+Requires-Dist: PySide6<7,>=6.8
+Requires-Dist: python-docx<2,>=1.1
+Requires-Dist: python-pptx<2,>=1.0
+Requires-Dist: pypdf<7,>=5
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8.3; extra == "dev"
+Requires-Dist: pyinstaller<7,>=6.10; extra == "dev"
+Requires-Dist: reportlab<5,>=4; extra == "dev"
