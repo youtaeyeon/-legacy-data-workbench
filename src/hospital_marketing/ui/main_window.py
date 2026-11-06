@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -83,6 +84,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.target_browse_button = QtWidgets.QPushButton("찾아보기")
         self.target_browse_button.clicked.connect(self._choose_target)
         form.addWidget(self.target_browse_button, 1, 2)
+        self.path_guide_button = QtWidgets.QPushButton("경로 안내")
+        self.path_guide_button.setObjectName("path_guide_button")
+        self.path_guide_button.clicked.connect(self._show_path_guide)
+        form.addWidget(self.path_guide_button, 2, 2)
         layout.addWidget(self.paths_group)
 
         self.extensions_group = QtWidgets.QGroupBox("읽을 파일 확장자")
@@ -136,6 +141,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if selected:
             self.target_path_edit.setText(selected)
 
+    def _show_path_guide(self) -> None:
+        QtWidgets.QMessageBox.information(
+            self,
+            "Source / Target 경로 안내",
+            "Source는 원본 파일이 바로 들어 있는 폴더입니다. 하위 폴더는 읽지 않습니다.\n\n"
+            "Target은 위키·대시보드·데이터가 저장되는 별도 폴더입니다. Source와 같거나 "
+            "Source를 포함하는 상위 폴더로 지정하지 마세요. Target을 Source 안에 둘 수는 있지만 "
+            "Target 하위 폴더는 원본 검색에서 제외됩니다.\n\n"
+            "날짜별 업데이트는 20261102 → 20261103 → 20261106 순서로 폴더를 하나씩 지정하세요.\n\n"
+            "좋은 예: Source ...\\source\\20261102, Target ...\\output\n"
+            "나쁜 예: Source ...\\data\\source\\20261102, Target ...\\data",
+        )
+
     def _open_settings(self) -> None:
         from ..ai.registry import ProviderRegistry
         from ..credentials import CredentialStore
@@ -154,6 +172,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         source_dir = Path(source_text)
         target_dir = Path(target_text)
+        if self._source_conflicts_with_target(source_dir, target_dir):
+            message = (
+                "Target 폴더 안에 Source가 있어 파일을 읽을 수 없습니다. "
+                "Target을 Source와 겹치지 않는 별도 폴더로 지정해 주세요."
+            )
+            self.status_label.setText(message)
+            QtWidgets.QMessageBox.warning(self, "폴더 경로 확인", message)
+            return
         selected_extensions = tuple(
             extension
             for extension in SUPPORTED_EXTENSIONS
@@ -186,17 +212,29 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.dashboard_path = result.outputs.dashboard
             report = result.report
-            self.status_label.setText(
+            status = (
                 f"처리 완료 · 읽은 파일 {report.files_seen} · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
                 f"변경 없음 {report.unchanged_count} · 오류 {len(report.issues)} · "
                 f"분류 {result.classified_count} · 검토 필요 {result.needs_review_count}"
             )
+            if report.files_seen == 0:
+                status += " · 읽을 파일이 없습니다. 선택 확장자 파일이 폴더 바로 아래에 있는지 확인하세요."
+            self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
         except Exception:
             self.status_label.setText("처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요.")
             self.open_dashboard_button.setEnabled(False)
         finally:
             self.run_button.setEnabled(True)
+
+    @staticmethod
+    def _source_conflicts_with_target(source_dir: Path, target_dir: Path) -> bool:
+        source_path = Path(os.path.normcase(str(Path(source_dir).resolve())))
+        target_path = Path(os.path.normcase(str(Path(target_dir).resolve())))
+        try:
+            return source_path == target_path or source_path.is_relative_to(target_path)
+        except ValueError:
+            return False
 
     def _set_dashboard_path(self, path: Path) -> None:
         self.dashboard_path = Path(path)

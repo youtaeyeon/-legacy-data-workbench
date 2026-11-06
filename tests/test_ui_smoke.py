@@ -73,6 +73,7 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     assert settings_store.load().source_dir == source
     assert settings_store.load().target_dir == target
     assert "읽은 파일 0" in window.status_label.text()
+    assert "읽을 파일이 없습니다" in window.status_label.text()
     assert "신규 2" in window.status_label.text()
     assert window.open_dashboard_button.isEnabled()
 
@@ -150,6 +151,84 @@ def test_main_window_persists_extension_checkboxes_and_black_folder_labels(tmp_p
 
     assert workflow.extension_calls[-1] == (".txt",)
     assert settings_store.load().enabled_extensions == (".txt",)
+    window.close()
+
+
+def test_main_window_blocks_source_equal_to_or_nested_in_target(tmp_path, monkeypatch):
+    _app()
+    monkeypatch.setattr(os.path, "normcase", lambda value: value.casefold())
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    paths = (
+        (tmp_path / "same", tmp_path / "same"),
+        (tmp_path / "data" / "source" / "20261102", tmp_path / "data"),
+        (tmp_path / "DATA" / "source" / "20261102", tmp_path / "data"),
+    )
+
+    for index, (source, target) in enumerate(paths):
+        workflow = FakeWorkflow(target / "dashboard" / "index.html")
+        window = MainWindow(SettingsStore(tmp_path / f"settings-{index}.json"), workflow)
+        window.source_path_edit.setText(str(source))
+        window.target_path_edit.setText(str(target))
+
+        window.run_button.click()
+
+        assert workflow.calls == []
+        assert "Target 폴더 안에 Source" in window.status_label.text()
+        assert warnings[-1] == window.status_label.text()
+        window.close()
+
+
+def test_main_window_allows_target_inside_source_and_reports_empty_source(tmp_path, monkeypatch):
+    _app()
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    source = tmp_path / "source"
+    target = source / "output"
+    workflow = FakeWorkflow(target / "dashboard" / "index.html")
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), workflow)
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window.run_button.click()
+
+    assert len(workflow.calls) == 1
+    assert "읽을 파일이 없습니다" in window.status_label.text()
+    assert "선택 확장자 파일이 폴더 바로 아래" in window.status_label.text()
+    assert warnings == []
+    window.close()
+
+
+def test_path_guide_button_explains_source_target_and_date_order(tmp_path, monkeypatch):
+    _app()
+    messages = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "information",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+    window = MainWindow(
+        SettingsStore(tmp_path / "settings.json"),
+        FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"),
+    )
+
+    window.path_guide_button.click()
+
+    assert len(messages) == 1
+    title, message = messages[0]
+    assert "경로 안내" in title
+    assert "바로 들어 있는" in message
+    assert "하위 폴더는 읽지 않습니다" in message
+    assert "20261102" in message and "20261103" in message and "20261106" in message
+    assert "나쁜 예" in message
     window.close()
 
 
