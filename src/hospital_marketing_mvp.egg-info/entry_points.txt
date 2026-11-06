@@ -1,2 +1,0 @@
-[console_scripts]
-hospital-marketing = hospital_marketing.app:main
