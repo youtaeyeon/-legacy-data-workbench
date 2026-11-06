@@ -70,20 +70,17 @@ def test_duplicate_ids_are_rejected_without_guessing_but_valid_rows_import(tmp_p
 
 def test_later_snapshot_overwrites_hospital_fields_from_earlier_file(tmp_path):
     source = tmp_path / "source"
-    older = source / "20261102"
-    newer = source / "20261103"
-    older.mkdir(parents=True)
-    newer.mkdir()
-    for folder, hospital_name, region in (
-        (older, "목업 병원 이전 이름", "가상권역 A"),
-        (newer, "목업 병원 최신 이름", "가상권역 B"),
+    source.mkdir()
+    for filename, hospital_name, region in (
+        ("20261102.xlsx", "목업 병원 이전 이름", "가상권역 A"),
+        ("20261103.xlsx", "목업 병원 최신 이름", "가상권역 B"),
     ):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Hospitals"
         sheet.append(("hospital_id", "hospital_name", "region"))
         sheet.append(("MOCK-SNAPSHOT", hospital_name, region))
-        workbook.save(folder / "hospitals.xlsx")
+        workbook.save(source / filename)
     repository, service = _service(tmp_path)
 
     report = service.import_folder(source)
