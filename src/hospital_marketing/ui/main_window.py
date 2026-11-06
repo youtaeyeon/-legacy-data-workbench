@@ -14,6 +14,9 @@ from ..settings import AppSettings, SettingsStore
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
 
+PATH_GUIDE_BUTTON_SIZE = 20
+PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
+
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(
@@ -50,6 +53,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QPushButton#open_dashboard_button { background: #245c9e; color: #ffffff; font-weight: 600; }
             QPushButton:disabled { color: #7a7f83; background: #e9e3d3; }
             QLabel#status_label { background: #e9e3d3; border-left: 4px solid #5d6c58; border-radius: 4px; padding: 10px 12px; color: #09223f; }
+            QToolButton#path_guide_button { border: 1.5px solid #09223f; border-radius: 10px; background: #f3eee2; color: #09223f; font-size: 12px; font-weight: 700; padding: 0; }
+            QToolButton#path_guide_button:hover { background: #09223f; color: #f3eee2; }
         """)
         layout = QtWidgets.QVBoxLayout(central)
         layout.setContentsMargins(28, 22, 28, 22)
@@ -87,10 +92,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.target_browse_button = QtWidgets.QPushButton("찾아보기")
         self.target_browse_button.clicked.connect(self._choose_target)
         form.addWidget(self.target_browse_button, 1, 2)
-        self.path_guide_button = QtWidgets.QPushButton("경로 안내")
+        # Small circled "?" on the group's top-right border; repositioned on resize.
+        self.path_guide_button = QtWidgets.QToolButton(self.paths_group)
         self.path_guide_button.setObjectName("path_guide_button")
+        self.path_guide_button.setText("?")
+        self.path_guide_button.setToolTip("사용법 안내 · Source / Target 경로 지정 방법")
+        self.path_guide_button.setAccessibleName("경로 안내")
+        self.path_guide_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.path_guide_button.setFixedSize(PATH_GUIDE_BUTTON_SIZE, PATH_GUIDE_BUTTON_SIZE)
         self.path_guide_button.clicked.connect(self._show_path_guide)
-        form.addWidget(self.path_guide_button, 2, 2)
+        self.paths_group.installEventFilter(self)
         layout.addWidget(self.paths_group)
 
         self.extensions_group = QtWidgets.QGroupBox("읽을 파일 확장자")
@@ -149,6 +160,21 @@ class MainWindow(QtWidgets.QMainWindow):
         selected = QtWidgets.QFileDialog.getExistingDirectory(self, "Target 폴더 선택", current)
         if selected:
             self.target_path_edit.setText(selected)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if watched is self.paths_group and event.type() in (
+            QtCore.QEvent.Type.Resize,
+            QtCore.QEvent.Type.Show,
+        ):
+            self._place_path_guide_button()
+        return super().eventFilter(watched, event)
+
+    def _place_path_guide_button(self) -> None:
+        # Sit on the group's top border line, mirroring the title on the left.
+        button = self.path_guide_button
+        x = self.paths_group.width() - button.width() - PATH_GUIDE_BUTTON_RIGHT_MARGIN
+        button.move(max(0, x), 0)
+        button.raise_()
 
     def _show_path_guide(self) -> None:
         QtWidgets.QMessageBox.information(
