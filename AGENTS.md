@@ -9,6 +9,7 @@ wsl-hermes ──(feat/* 푸시 + PR 생성, 라벨 needs-review)──▶ wsl-c
 wsl-claude ──(검토 통과 → PR을 main에 merge)──────────────▶ windows-claude
 wsl-claude ──(수정 필요 → 라벨 changes-requested)─────────▶ wsl-hermes
 windows-claude ──(테스트 실패 → 이슈, 라벨 windows-test-failed)──▶ wsl-hermes
+windows-claude ──(사용자가 요청하면 → EXE 빌드 후 GitHub Releases에 zip 업로드)
 ```
 
 에이전트끼리의 신호는 모두 **GitHub PR·이슈·라벨**로 주고받습니다. 저장소: `youtaeyeon/-legacy-data-workbench`
@@ -31,7 +32,7 @@ windows-claude ──(테스트 실패 → 이슈, 라벨 windows-test-failed)�
 1. **main에 직접 커밋·푸시 금지.** main은 `wsl-claude`가 PR merge(`gh pr merge`)로만 바꿉니다. 유일한 예외는 사용자가 직접 지시한 경우입니다.
 2. **다른 역할의 작업 폴더를 수정하지 않습니다.** 같은 Ubuntu 사용자라 접근은 되지만 건드리지 않습니다.
 3. **실제 회사 자료, API 키, 개인 연락처는 커밋하지 않습니다.** 테스트는 목업 데이터만 씁니다. API 키는 OS 자격 증명 저장소에만 둡니다.
-4. 브랜치 이름: `feat/<주제>`, `fix/<주제>`, `test/<주제>`, `docs/<주제>`. 영문 소문자와 하이픈만 씁니다.
+4. 브랜치 이름: `feat/<주제>`, `fix/<주제>`, `test/<주제>`, `docs/<주제>`, `chore/<주제>`. 영문 소문자와 하이픈만 씁니다.
 5. 커밋 메시지는 한국어나 영어로 무엇을 왜 바꿨는지 한 줄로 씁니다. 커밋 하나에는 관련된 변경만 담습니다.
 6. 테스트가 실패한 상태로 PR을 열거나 merge하지 않습니다.
 7. 쓰는 라벨: `needs-review`, `changes-requested`, `windows-test-failed`. 라벨이 없으면 `gh label create <이름>`으로 만듭니다.
@@ -97,6 +98,9 @@ $env:QT_QPA_PLATFORM = "offscreen"; .\.venv\Scripts\python.exe -m pytest -q; Rem
 3. 라벨을 바꿉니다: `gh pr edit <번호> --remove-label changes-requested --add-label needs-review`
 4. PR에 무엇을 고쳤는지 댓글을 남깁니다.
 
+### 릴리스용 버전 올리기
+사용자가 새 릴리스를 요청했는데 `pyproject.toml`의 `version`이 이미 릴리스된 버전(`gh release list`)이면, `chore/bump-version-<새 버전>` 브랜치에서 `version`을 올리는 PR을 엽니다. 작은 수정은 패치(0.1.0 → 0.1.1), 기능 추가는 마이너(0.1.0 → 0.2.0)를 올립니다. merge되면 `windows-claude`가 릴리스합니다.
+
 ### Windows 테스트 실패 (`windows-test-failed`)
 1. 이슈 본문의 실패 로그를 읽고 `fix/<주제>` 브랜치에서 고칩니다.
 2. PR 본문에 `Fixes #<이슈번호>`를 넣어 위 "새 작업" 5단계와 같이 PR을 엽니다.
@@ -153,6 +157,12 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
+GitHub CLI(`gh`)가 없으면 설치합니다. PR 댓글, 이슈 생성, 릴리스 업로드에 필요합니다.
+```powershell
+winget install --id GitHub.cli -e
+```
+설치한 뒤 **사용자에게** 새 PowerShell 창에서 `gh auth login`을 직접 실행해 달라고 요청합니다. 브라우저 로그인이 필요해서 에이전트가 대신할 수 없습니다. `gh auth status`로 로그인을 확인합니다.
+
 ### main이 바뀔 때마다
 1. `git fetch origin`. `git rev-parse HEAD`와 `git rev-parse origin/main`이 같으면 "새 변경 없음"이라고 알리고 끝냅니다.
 2. `git switch main; git pull --ff-only`
@@ -167,4 +177,37 @@ py -3.12 -m venv .venv
      gh issue create --label windows-test-failed --title "Windows 테스트 실패: <요약>" --body "<커밋 해시, 실패한 명령, 오류 로그 핵심 부분, 재현 방법>"
      ```
      코드는 직접 고치지 않습니다. 수정은 `wsl-hermes`가 합니다.
-8. 이 폴더에서는 커밋하거나 푸시하지 않습니다.
+8. 이 폴더에서는 커밋하거나 푸시하지 않습니다. 아래 릴리스 절차의 `gh release create`(태그 생성)만 예외입니다.
+
+### 릴리스 (EXE 배포)
+
+EXE와 빌드 결과물(`dist-win/`, `build-win/`)은 git에 커밋하지 않습니다(`.gitignore`). 제출이나 배포용 EXE는 **GitHub Releases**에 zip으로 올립니다.
+
+**언제:** 사용자가 "릴리스/배포/제출용 EXE 만들어 줘"라고 요청할 때만 합니다. main이 바뀔 때마다 자동으로 하지 않습니다.
+
+**버전 규칙:** 태그는 `v<pyproject.toml의 version>`입니다(예: `v0.1.0`). 같은 버전은 한 번만 릴리스합니다. 버전을 올리는 것은 `wsl-hermes`가 PR로 합니다.
+
+1. 위 "main이 바뀔 때마다" 1~5단계를 먼저 끝내서, 최신 main에서 Windows 테스트가 통과한 상태여야 합니다. 실패했다면 릴리스하지 않고 이슈를 만듭니다.
+2. 버전과 커밋을 확인합니다.
+   ```powershell
+   $Version = (.\.venv\Scripts\python.exe -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
+   $Tag = "v$Version"
+   $Commit = (git rev-parse HEAD).Trim()
+   gh release view $Tag 2>$null; if ($LASTEXITCODE -eq 0) { "이미 $Tag 릴리스가 있음" }
+   ```
+   이미 같은 태그가 있으면 멈추고, 사용자에게 "버전을 올리는 PR이 먼저 필요하다(wsl-hermes 작업)"고 알립니다. 기존 릴리스를 지우거나 덮어쓰지 않습니다.
+3. 빌드합니다. 이 스크립트가 테스트도 다시 실행하고, 실패하면 중단합니다.
+   ```powershell
+   .\scripts\package_windows.ps1
+   ```
+4. 빌드한 EXE를 직접 실행해 창이 뜨는지 확인합니다: `dist-win\HospitalMarketingMVP\HospitalMarketingMVP.exe`
+5. 폴더째 zip으로 묶습니다. EXE 혼자서는 실행되지 않고 `_internal\` 폴더가 함께 있어야 합니다.
+   ```powershell
+   $Zip = "dist-win\HospitalMarketingMVP-$Tag-win64.zip"
+   Compress-Archive -Path dist-win\HospitalMarketingMVP -DestinationPath $Zip -Force
+   ```
+6. 릴리스를 만듭니다.
+   ```powershell
+   gh release create $Tag $Zip --target $Commit --title "HospitalMarketingMVP $Tag" --notes "Windows 64bit 실행 파일. zip을 풀고 HospitalMarketingMVP\HospitalMarketingMVP.exe를 실행하세요. 빌드 커밋: $Commit. 테스트용 원본 데이터는 저장소의 data\source 폴더에 있습니다."
+   ```
+7. 사용자에게 릴리스 URL(`gh release view $Tag --web` 또는 `--json url`)과 zip 크기를 알립니다.

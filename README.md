@@ -70,3 +70,7 @@ Windows EXE는 Windows에서 빌드해야 합니다. WSL의 Linux 빌드 결과�
 ## 에이전트 협업
 
 wsl-hermes(개발) → wsl-claude(검토·main merge) → windows-claude(Windows 테스트) 흐름과 역할별 절차는 [AGENTS.md](AGENTS.md)에 있습니다.
+
+## 실행 파일 받기
+
+Windows 실행 파일(EXE)은 저장소에 포함하지 않고 [GitHub Releases](https://github.com/youtaeyeon/-legacy-data-workbench/releases)에 zip으로 올립니다. zip을 풀고 `HospitalMarketingMVP\HospitalMarketingMVP.exe`를 실행하세요.
