@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+import math
+import random
+import re
+import time
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
 
 from ..base import AIProvider, RelevanceResult
+from ..models import RECOMMENDED_MODELS
 from ...domain import ContentItem, Hospital
 from ...providers import ProviderConfigurationError, ProviderRequestError
 
@@ -20,11 +27,27 @@ SYSTEM_PROMPT = (
     "Use needs_review when uncertain. Never invent a link or claim."
 )
 
+MAX_HTTP_RETRIES = 3
+MAX_TRANSPORT_RETRIES = 1
+BASE_RETRY_DELAY_SECONDS = 1.0
+MAX_RETRY_AFTER_SECONDS = 10.0
+MAX_PROVIDER_ERROR_DETAIL_LENGTH = 200
+RETRYABLE_STATUS_CODES = frozenset({500, 502, 503, 504})
+
 
 class RemoteAIProvider(AIProvider, ABC):
     provider_id = "remote"
 
-    def __init__(self, api_key: str, model: str, http_client: Any | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        http_client: Any | None = None,
+        *,
+        sleep_fn: Callable[[float], None] | None = None,
+        jitter_fn: Callable[[float], float] | None = None,
+        on_retry: Callable[[int, int, float], None] | None = None,
+    ):
         if not api_key or not api_key.strip():
             raise ProviderConfigurationError("선택한 AI 제공자의 API 키를 설정해 주세요.")
         if not model or not model.strip():
@@ -32,6 +55,159 @@ class RemoteAIProvider(AIProvider, ABC):
         self._api_key = api_key
         self.model = model.strip()
         self._client = http_client or httpx.Client(timeout=30.0)
+        self._sleep_fn = sleep_fn or time.sleep
+        self._jitter_fn = jitter_fn or (lambda maximum: random.uniform(0.0, maximum))
+        self._on_retry = on_retry
+
+    def _backoff_delay(self, retry_number: int) -> float:
+        base_delay = BASE_RETRY_DELAY_SECONDS * (2 ** (retry_number - 1))
+        jitter_limit = base_delay * 0.1
+        jitter = min(max(self._jitter_fn(jitter_limit), 0.0), jitter_limit)
+        return base_delay + jitter
+
+    @staticmethod
+    def _retry_after_seconds(value: str | None) -> float | None:
+        if not value:
+            return None
+        try:
+            delay = float(value.strip())
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(value)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return None
+        if not math.isfinite(delay) or delay < 0:
+            return None
+        return min(delay, MAX_RETRY_AFTER_SECONDS)
+
+    @staticmethod
+    def _contains_prompt_excerpt(detail: str, prompt: str) -> bool:
+        normalized_detail = " ".join(detail.split())[:MAX_PROVIDER_ERROR_DETAIL_LENGTH].casefold()
+        normalized_prompt = " ".join(prompt.split()).casefold()
+        if not normalized_prompt:
+            return False
+        if len(normalized_prompt) < 16:
+            return normalized_prompt in normalized_detail
+        detail_windows = {
+            normalized_detail[offset : offset + 16]
+            for offset in range(max(0, len(normalized_detail) - 15))
+        }
+        return any(
+            normalized_prompt[offset : offset + 16] in detail_windows
+            for offset in range(len(normalized_prompt) - 15)
+        )
+
+    def _provider_error_detail(self, response: httpx.Response, prompt: str) -> str:
+        try:
+            payload = response.json()
+        except (ValueError, TypeError):
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return ""
+
+        status = error.get("status") or error.get("type") or error.get("code")
+        message = error.get("message")
+        details = []
+        for value, is_message in ((status, False), (message, True)):
+            if not isinstance(value, (str, int)):
+                continue
+            detail = str(value)
+            for sensitive in (self._api_key, prompt):
+                if sensitive:
+                    detail = detail.replace(sensitive, "[REDACTED]")
+            detail = " ".join(detail.split())
+            detail = re.sub(
+                r"(?i)\b(?:authorization|x-api-key|x-goog-api-key|anthropic-version)\s*[:=]\s*(?:bearer\s+)?\S+",
+                "[REDACTED HEADER]",
+                detail,
+            )
+            detail = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [REDACTED]", detail)
+            if is_message and self._contains_prompt_excerpt(detail, prompt):
+                continue
+            if detail:
+                details.append(detail)
+        return " · ".join(details)[:MAX_PROVIDER_ERROR_DETAIL_LENGTH]
+
+    def _http_error_message(self, response: httpx.Response, retry_count: int, prompt: str) -> str:
+        status_code = response.status_code
+        detail = self._provider_error_detail(response, prompt)
+        detail_text = f" · {detail}" if detail else ""
+        alternative = next(
+            (model for model in RECOMMENDED_MODELS.get(self.provider_id, ()) if model != self.model),
+            None,
+        )
+        model_advice = (
+            f"다른 모델(예: {alternative})을 선택해 보세요."
+            if alternative
+            else "다른 모델을 선택해 보세요."
+        )
+        if status_code in RETRYABLE_STATUS_CODES:
+            return (
+                f"AI 제공자가 일시적으로 응답할 수 없습니다(HTTP {status_code}{detail_text}). "
+                f"{retry_count}번 재시도했지만 실패했습니다. 잠시 후 다시 시도하거나 {model_advice}"
+            )
+        if status_code == 429:
+            retry_summary = (
+                f"{retry_count}번 재시도했지만 실패했습니다."
+                if retry_count
+                else "Retry-After 정보가 없어 자동 재시도하지 않았습니다."
+            )
+            return (
+                f"AI 제공자 요청 한도에 도달했습니다(HTTP 429{detail_text}). "
+                f"{retry_summary} 잠시 후 다시 시도하거나 {model_advice}"
+            )
+        if status_code in {401, 403}:
+            return f"AI 제공자 인증에 실패했습니다(HTTP {status_code}{detail_text}). API 키와 계정 권한을 확인하세요."
+        if status_code == 404:
+            return f"요청한 모델을 찾을 수 없습니다(HTTP 404{detail_text}). 모델 ID를 확인하세요."
+        return f"AI 제공자에서 HTTP {status_code} 오류를 반환했습니다{detail_text}. 요청과 제공자 상태를 확인하세요."
+
+    def _notify_retry(self, retry_number: int, max_retries: int, delay: float) -> None:
+        if self._on_retry is not None:
+            self._on_retry(retry_number, max_retries, delay)
+
+    def _post_with_retries(self, prompt: str) -> Any:
+        http_retries = 0
+        transport_retries = 0
+        while True:
+            try:
+                response = self._post(prompt)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as exc:
+                response = exc.response
+                status_code = response.status_code
+                retry_after = (
+                    self._retry_after_seconds(response.headers.get("Retry-After"))
+                    if status_code == 429
+                    else None
+                )
+                if status_code in RETRYABLE_STATUS_CODES or retry_after is not None:
+                    if http_retries < MAX_HTTP_RETRIES:
+                        http_retries += 1
+                        delay = retry_after if retry_after is not None else self._backoff_delay(http_retries)
+                        self._notify_retry(http_retries, MAX_HTTP_RETRIES, delay)
+                        self._sleep_fn(delay)
+                        continue
+                raise ProviderRequestError(self._http_error_message(response, http_retries, prompt)) from None
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                if transport_retries < MAX_TRANSPORT_RETRIES:
+                    transport_retries += 1
+                    delay = self._backoff_delay(transport_retries)
+                    self._notify_retry(transport_retries, MAX_TRANSPORT_RETRIES, delay)
+                    self._sleep_fn(delay)
+                    continue
+                if isinstance(exc, httpx.TimeoutException):
+                    message = "AI 제공자 요청 시간이 초과됐습니다. 한 차례 재시도했지만 실패했습니다. 네트워크 상태를 확인해 주세요."
+                else:
+                    message = "AI 제공자에 연결할 수 없습니다. 한 차례 재시도했지만 실패했습니다. 네트워크 또는 제공자 상태를 확인하세요."
+                raise ProviderRequestError(message) from None
 
     @abstractmethod
     def _post(self, prompt: str):
@@ -43,29 +219,15 @@ class RemoteAIProvider(AIProvider, ABC):
 
     def _complete(self, prompt: str) -> str:
         try:
-            response = self._post(prompt)
-            response.raise_for_status()
+            response = self._post_with_retries(prompt)
             text = self._extract_text(response.json())
             if not text.strip():
                 raise ValueError("empty response")
             return text.strip()
-        except httpx.TimeoutException:
-            raise ProviderRequestError("AI 제공자 요청 시간이 초과됐습니다. 네트워크 상태를 확인하고 다시 시도해 주세요.") from None
-        except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code
-            if status_code in {401, 403}:
-                message = f"AI 제공자 인증에 실패했습니다(HTTP {status_code}). API 키와 계정 권한을 확인하세요."
-            elif status_code == 404:
-                message = "요청한 모델을 찾을 수 없습니다(HTTP 404). 모델 ID를 확인하세요."
-            elif status_code == 429:
-                message = "AI 제공자 요청 한도 또는 사용량 한도에 도달했습니다(HTTP 429). 계정 사용량을 확인하세요."
-            else:
-                message = f"AI 제공자에서 HTTP {status_code} 오류를 반환했습니다. 잠시 후 다시 시도해 주세요."
-            raise ProviderRequestError(message) from None
-        except httpx.RequestError:
-            raise ProviderRequestError("AI 제공자에 연결할 수 없습니다. 네트워크 또는 제공자 상태를 확인하세요.") from None
         except ProviderRequestError:
             raise
+        except httpx.RequestError:
+            raise ProviderRequestError("AI 제공자에 연결할 수 없습니다. 네트워크 또는 제공자 상태를 확인하세요.") from None
         except (ValueError, KeyError, TypeError, IndexError):
             raise ProviderRequestError("AI 제공자 응답을 읽을 수 없습니다. 모델과 요청 형식을 확인하세요.") from None
         except Exception:
