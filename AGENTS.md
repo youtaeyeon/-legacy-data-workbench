@@ -63,7 +63,8 @@ $env:QT_QPA_PLATFORM = "offscreen"; .\.venv\Scripts\python.exe -m pytest -q; Rem
 
 - `fixtures/source/initial`, `fixtures/source/weekly`: 자동 테스트용 기본 목업입니다. `scripts/create_mock_workbooks.py`로 생성합니다.
 - `data/source/20261102`, `20261103`, `20261106`: 날짜별 계약병원 누적 목업입니다. `scripts/create_sample_contracts.py`로 생성합니다.
-  - 앱에서는 이 세 폴더를 **날짜순으로 하나씩** source로 지정합니다. 상위 폴더 `data/source`를 한 번에 선택하면 병원 ID가 중복되어 모든 행을 건너뜁니다.
+- **source 폴더 규칙:** 앱은 선택한 폴더 **바로 아래** 파일 중 선택한 확장자만 읽습니다. 하위 폴더는 읽지 않습니다. 매번 바뀐 파일이 있는 폴더를 source로 지정하는 것이 정상 사용 방식입니다(이슈 #9). 이 동작을 재귀 탐색으로 되돌리지 마세요.
+  - 날짜별 목업은 세 폴더를 **날짜순으로 하나씩** source로 지정합니다. 상위 폴더 `data/source`를 선택하면 읽은 파일 0개, 병원 변화 없음이 정상입니다.
   - 기대 결과: 신규 14 → 신규 3 + 변경 없음 14 → 신규 4 + 변경 없음 17. `tests/test_sample_source_data.py`가 이 결과를 검증합니다.
 - `data/목업 자료.xlsx`: 영업부·마케팅부 시트의 원래 예시 자료입니다. importer가 직접 읽는 형식이 아니라 참고용입니다.
 - importer가 읽는 형식: `Hospitals` 시트, 1행 영문 헤더, `hospital_id`와 `hospital_name` 필수. 보강 시트는 `Deliveries`, `Materials`, `Channels`, `ContentCandidates`입니다.
