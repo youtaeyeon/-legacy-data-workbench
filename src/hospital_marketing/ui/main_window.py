@@ -187,7 +187,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dashboard_path = result.outputs.dashboard
             report = result.report
             self.status_label.setText(
-                f"처리 완료 · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
+                f"처리 완료 · 읽은 파일 {report.files_seen} · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
                 f"변경 없음 {report.unchanged_count} · 오류 {len(report.issues)} · "
                 f"분류 {result.classified_count} · 검토 필요 {result.needs_review_count}"
             )

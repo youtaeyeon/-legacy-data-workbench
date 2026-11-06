@@ -127,13 +127,9 @@ class ImportService:
             for extension in enabled
             if extension.lower().lstrip(".") in {"xlsx", "csv"}
         )
-        files = [
-            path
-            for path in selected_source_files(
-                source_dir, structured_extensions, exclude_dir=exclude_dir
-            )
-            if not path.name.startswith("~$")
-        ]
+        files = selected_source_files(
+            source_dir, structured_extensions, exclude_dir=exclude_dir
+        )
         report.files_seen = len(files)
         readable_files: list[Path] = []
         candidate_rows: list[tuple[str, Hospital, str, int]] = []

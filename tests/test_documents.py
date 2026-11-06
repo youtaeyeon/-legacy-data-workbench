@@ -133,28 +133,31 @@ def test_extracts_korean_pdf_text_when_a_cjk_font_is_embedded(tmp_path):
     assert "목업 PDF 한글 본문" in read_document(path).text
 
 
-def test_selected_source_files_respects_enabled_extensions_recursively(tmp_path):
+def test_selected_source_files_uses_only_direct_files_and_ignores_office_temporary_files(tmp_path):
     (tmp_path / "nested").mkdir()
     (tmp_path / "a.csv").write_text("a,b\n1,2", encoding="utf-8")
     (tmp_path / "b.docx").touch()
     (tmp_path / "nested" / "c.csv").write_text("c,d\n3,4", encoding="utf-8")
+    (tmp_path / "~$temporary.csv").write_text("temporary,data", encoding="utf-8")
 
     selected = selected_source_files(tmp_path, (".csv",))
 
-    assert [path.name for path in selected] == ["a.csv", "c.csv"]
+    assert [path.name for path in selected] == ["a.csv"]
 
 
 def test_source_scan_excludes_target_subtree_to_prevent_reimporting_generated_outputs(tmp_path):
     source = tmp_path / "source"
     target = source / "target"
-    (source / "input").mkdir(parents=True)
-    (source / "input" / "notes.txt").write_text("source", encoding="utf-8")
+    source.mkdir()
+    (source / "notes.txt").write_text("source", encoding="utf-8")
     (target / "wiki").mkdir(parents=True)
     (target / "wiki" / "generated.txt").write_text("output", encoding="utf-8")
 
     selected = selected_source_files(source, (".txt",), exclude_dir=target)
+    excluded = selected_source_files(source, (".txt",), exclude_dir=source)
 
-    assert [path.relative_to(source).as_posix() for path in selected] == ["input/notes.txt"]
+    assert [path.relative_to(source).as_posix() for path in selected] == ["notes.txt"]
+    assert excluded == []
 
 
 def test_markdown_paths_preserve_relative_path_and_extension_to_avoid_collision(tmp_path):

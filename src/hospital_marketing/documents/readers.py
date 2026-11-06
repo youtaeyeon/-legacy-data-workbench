@@ -192,8 +192,8 @@ def selected_source_files(
     source_root = source_dir.resolve()
     excluded = Path(exclude_dir).resolve() if exclude_dir is not None else None
     files: list[Path] = []
-    for path in source_dir.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in enabled:
+    for path in source_dir.iterdir():
+        if not path.is_file() or path.name.startswith("~$") or path.suffix.lower() not in enabled:
             continue
         resolved = path.resolve()
         if not resolved.is_relative_to(source_root):

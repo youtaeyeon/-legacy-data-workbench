@@ -72,6 +72,7 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     assert workflow.calls == [(source, target, "mock", "", True)]
     assert settings_store.load().source_dir == source
     assert settings_store.load().target_dir == target
+    assert "읽은 파일 0" in window.status_label.text()
     assert "신규 2" in window.status_label.text()
     assert window.open_dashboard_button.isEnabled()
 
