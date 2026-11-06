@@ -1,5 +1,8 @@
 import json
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 
+import httpx
 import pytest
 
 from hospital_marketing.ai.adapters.anthropic_provider import AnthropicProvider
@@ -36,6 +39,30 @@ class FakeClient:
         if self.error:
             raise self.error
         return FakeResponse(self.payload)
+
+
+class SequenceHttpClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def post(self, url, *, headers, json):
+        self.calls.append((url, headers, json))
+        result = self.responses.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
+def _http_response(status_code, *, payload=None, headers=None, content=None):
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    if content is not None:
+        return httpx.Response(status_code, headers=headers, content=content, request=request)
+    return httpx.Response(status_code, headers=headers, json=payload, request=request)
+
+
+def _success_response():
+    return _http_response(200, payload=_fake_payload("openai", {"ok": True}))
 
 
 def _item():
@@ -101,6 +128,358 @@ def test_provider_request_error_does_not_expose_secret_or_provider_exception():
 
     assert "secret-test-key" not in str(exc.value)
     assert "in error" not in str(exc.value)
+
+
+def test_server_errors_retry_with_exponential_backoff_and_report_progress():
+    client = SequenceHttpClient(
+        [
+            _http_response(503, payload={"error": {"status": "UNAVAILABLE", "message": "overloaded"}}),
+            _http_response(503, payload={"error": {"status": "UNAVAILABLE", "message": "overloaded"}}),
+            _success_response(),
+        ]
+    )
+    delays = []
+    retries = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+        on_retry=lambda *args: retries.append(args),
+    )
+
+    provider.test_connection()
+
+    assert len(client.calls) == 3
+    assert delays == [1.0, 2.0]
+    assert retries == [(1, 3, 1.0), (2, 3, 2.0)]
+
+
+@pytest.mark.parametrize("status_code", [500, 502, 503, 504])
+def test_exhausted_server_retries_include_provider_reason_and_model_advice(status_code):
+    client = SequenceHttpClient(
+        [
+            _http_response(
+                status_code,
+                payload={
+                    "error": {
+                        "status": "UNAVAILABLE",
+                        "message": (
+                            "The model is overloaded; secret-test-key must be redacted. "
+                            'Return only the JSON object {"ok": true}. Authorization: Bearer secret-test-key'
+                        ),
+                        "headers": {"Authorization": "Bearer secret-test-key"},
+                    }
+                },
+            )
+            for _ in range(4)
+        ]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    message = str(exc.value)
+    assert len(client.calls) == 4
+    assert delays == [1.0, 2.0, 4.0]
+    assert f"HTTP {status_code}" in message
+    assert "UNAVAILABLE" in message and "The model is overloaded" in message
+    assert "3번" in message and "다른 모델" in message
+    assert "gpt-6-luna" in message
+    assert "secret-test-key" not in message and "Bearer" not in message
+    assert "Authorization" not in message
+    assert 'Return only the JSON object {"ok": true}.' not in message
+
+
+@pytest.mark.parametrize(
+    "prompt_excerpt",
+    ["Return only the JSON", "eturn only the J", "ETURN   ONLY THE J"],
+)
+def test_provider_error_redacts_a_partial_prompt_excerpt(prompt_excerpt):
+    client = SequenceHttpClient(
+        [
+            _http_response(
+                503,
+                payload={"error": {"status": "UNAVAILABLE", "message": f"overloaded; {prompt_excerpt}"}},
+            )
+            for _ in range(4)
+        ]
+    )
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=lambda _delay: None,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    assert "UNAVAILABLE" in str(exc.value)
+    normalized_error = " ".join(str(exc.value).split()).casefold()
+    normalized_excerpt = " ".join(prompt_excerpt.split()).casefold()
+    assert normalized_excerpt not in normalized_error
+
+
+def test_retry_after_header_is_honored_and_capped():
+    client = SequenceHttpClient(
+        [
+            _http_response(429, headers={"Retry-After": "2"}, payload={"error": {"message": "busy"}}),
+            _success_response(),
+        ]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    provider.test_connection()
+
+    assert len(client.calls) == 2
+    assert delays == [2.0]
+
+
+def test_retry_after_delay_is_capped_at_ten_seconds():
+    client = SequenceHttpClient(
+        [
+            _http_response(429, headers={"Retry-After": "100"}, payload={"error": {"message": "busy"}}),
+            _success_response(),
+        ]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    provider.test_connection()
+
+    assert delays == [10.0]
+
+
+def test_http_date_retry_after_is_parsed_and_capped():
+    retry_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+    retry_after = format_datetime(retry_at, usegmt=True)
+    client = SequenceHttpClient(
+        [
+            _http_response(429, headers={"Retry-After": retry_after}, payload={"error": {"message": "busy"}}),
+            _success_response(),
+        ]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    provider.test_connection()
+
+    assert len(client.calls) == 2
+    assert delays == [10.0]
+
+
+@pytest.mark.parametrize("retry_after", [None, "NaN", "inf", "-1", "invalid"])
+def test_rate_limit_without_valid_retry_after_is_not_retried(retry_after):
+    headers = {"Retry-After": retry_after} if retry_after is not None else None
+    client = SequenceHttpClient(
+        [_http_response(429, headers=headers, payload={"error": {"message": "busy"}})]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    assert len(client.calls) == 1
+    assert delays == []
+    assert "HTTP 429" in str(exc.value)
+    assert "Retry-After 정보가 없어" in str(exc.value)
+
+
+def test_rate_limit_retries_at_most_three_times():
+    client = SequenceHttpClient(
+        [
+            _http_response(429, headers={"Retry-After": "2"}, payload={"error": {"message": "busy"}})
+            for _ in range(4)
+        ]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    assert len(client.calls) == 4
+    assert delays == [2.0, 2.0, 2.0]
+    assert "3번" in str(exc.value)
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 404])
+def test_authentication_and_model_errors_are_not_retried(status_code):
+    client = SequenceHttpClient(
+        [_http_response(status_code, payload={"error": {"message": "invalid settings"}})]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError):
+        provider.test_connection()
+
+    assert len(client.calls) == 1
+    assert delays == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("fake timeout"),
+        httpx.ConnectError("fake connection error", request=httpx.Request("POST", "https://example.test")),
+    ],
+)
+def test_timeout_and_connection_errors_retry_once(error):
+    client = SequenceHttpClient([error, _success_response()])
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    provider.test_connection()
+
+    assert len(client.calls) == 2
+    assert delays == [1.0]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("fake timeout"),
+        httpx.ConnectError("fake connection error", request=httpx.Request("POST", "https://example.test")),
+    ],
+)
+def test_timeout_and_connection_errors_stop_after_one_retry(error):
+    client = SequenceHttpClient([error, error])
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError):
+        provider.test_connection()
+
+    assert len(client.calls) == 2
+    assert delays == [1.0]
+
+
+def test_exponential_backoff_applies_injected_jitter():
+    client = SequenceHttpClient(
+        [
+            _http_response(503, payload={"error": {"message": "busy"}}),
+            _success_response(),
+        ]
+    )
+    delays = []
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=delays.append,
+        jitter_fn=lambda maximum: maximum,
+    )
+
+    provider.test_connection()
+
+    assert delays == [1.1]
+
+
+@pytest.mark.parametrize("content", [b"not-json", b""])
+def test_invalid_or_empty_provider_error_body_is_handled_safely(content):
+    client = SequenceHttpClient([_http_response(503, content=content) for _ in range(4)])
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=lambda _delay: None,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    assert len(client.calls) == 4
+    assert "HTTP 503" in str(exc.value)
+    assert "not-json" not in str(exc.value)
+    assert "secret-test-key" not in str(exc.value)
+
+
+def test_provider_error_detail_is_limited_to_two_hundred_characters():
+    client = SequenceHttpClient(
+        [
+            _http_response(
+                503,
+                payload={"error": {"status": "UNAVAILABLE", "message": "x" * 500}},
+            )
+            for _ in range(4)
+        ]
+    )
+    provider = OpenAIProvider(
+        api_key="secret-test-key",
+        model="test-model",
+        http_client=client,
+        sleep_fn=lambda _delay: None,
+        jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    detail = str(exc.value).split("HTTP 503 · ", 1)[1].split(").", 1)[0]
+    assert len(detail) == 200
 
 
 def test_registry_exposes_all_selected_providers_and_accepts_injected_client():

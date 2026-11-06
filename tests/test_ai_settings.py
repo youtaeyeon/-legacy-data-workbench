@@ -114,8 +114,9 @@ def test_connection_test_reports_http_status_without_exposing_key(tmp_path, stat
         (httpx.ConnectError("fake network error", request=httpx.Request("POST", "https://api.openai.com")), "네트워크"),
     ],
 )
-def test_connection_test_distinguishes_timeout_and_network_errors(tmp_path, error, expected):
+def test_connection_test_distinguishes_timeout_and_network_errors(tmp_path, monkeypatch, error, expected):
     _app()
+    monkeypatch.setattr("hospital_marketing.ai.adapters.base.time.sleep", lambda _delay: None)
     client = FakeHttpClient(error=error)
     dialog = _dialog(tmp_path, client=client)
     dialog.provider_combo.setCurrentText("openai")
@@ -123,8 +124,9 @@ def test_connection_test_distinguishes_timeout_and_network_errors(tmp_path, erro
 
     dialog.test_connection_button.click()
 
-    assert len(client.calls) == 1
+    assert len(client.calls) == 2
     assert expected in dialog.connection_status_label.text()
+    assert "한 차례 재시도" in dialog.connection_status_label.text()
     assert "secret-test-key" not in dialog.connection_status_label.text()
 
 
