@@ -75,6 +75,7 @@ windows-claude ──(고객이 요청하면 → GitHub Releases에 zip 업로�
   1. `gh issue list --state open --label windows-test-failed`
   2. `gh pr list --state open --label changes-requested`
   3. `in-progress` 라벨이 붙은 열린 이슈가 없을 때만: `gh issue list --state open --label ready-for-dev`에서 **번호가 가장 작은** 이슈
+     - 여기서 "작업 중"은 **이슈에 `in-progress` 라벨이 붙은 경우만** 뜻합니다. 검토 중이거나 수정 요청을 받은 PR이 있어도 새 `ready-for-dev` 이슈를 시작해도 됩니다.
   - 이슈를 시작하면 `ready-for-dev`를 떼고 `in-progress`를 붙입니다. PR을 열면 그 이슈의 `in-progress`를 뗍니다.
 - **wsl-claude:** `gh pr list --state open --label needs-review`에서 번호가 가장 작은 PR 한 건을 검토합니다.
 - **windows-claude:** `gh pr list --state merged --label needs-windows-test`가 있으면 최신 main을 **한 번** 테스트하고, 결과를 그 PR들에 함께 반영합니다.
@@ -139,6 +140,7 @@ $env:QT_QPA_PLATFORM = "offscreen"; .\.venv\Scripts\python.exe -m pytest -q; Rem
 6. 이슈의 `in-progress`를 뗍니다. 새로 만든 파일이 untracked로 빠지지 않았는지 `git status`로 확인합니다. **직접 merge하지 않습니다.** 검토는 wsl-claude가 자동으로 가져갑니다.
 
 ### 검토 의견 반영 (`changes-requested`)
+- **main과 충돌해 다시 맞춰야 할 때는 rebase 대신 `git fetch origin && git merge origin/main`으로 맞추고 일반 `git push`를 씁니다.** force push가 필요 없습니다. merge는 squash로 하므로 이력이 지저분해지지 않습니다.
 1. `gh pr view <번호> --comments`로 지적 사항을 읽습니다.
 2. 같은 브랜치에서 고치고 테스트한 뒤 푸시합니다.
 3. 라벨을 바꿉니다: `changes-requested`를 떼고 `needs-review`를 붙입니다(공통 규칙 8의 REST 명령).
