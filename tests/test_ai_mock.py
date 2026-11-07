@@ -43,6 +43,24 @@ def test_mock_provider_excludes_unrelated_content():
     assert result == RelevanceResult("irrelevant", None, "제품명이 확인되지 않아 관련 콘텐츠에서 제외")
 
 
+def test_mock_provider_prefers_longer_matching_product():
+    result = MockProvider().classify_content(
+        _content("울트라클리어 엘리트 시술 후기"),
+        ("울트라클리어", "울트라클리어 엘리트"),
+    )
+
+    assert result.matched_product == "울트라클리어 엘리트"
+
+
+def test_mock_provider_does_not_match_disabled_products():
+    result = MockProvider().classify_content(
+        _content("울트라클리어 엘리트 시술 후기"),
+        ("리뉴비온",),
+    )
+
+    assert result.relevance_status == "irrelevant"
+
+
 def test_mock_provider_does_not_use_network(monkeypatch):
     def fail_network(*args, **kwargs):
         raise AssertionError("mock mode must not access the network")

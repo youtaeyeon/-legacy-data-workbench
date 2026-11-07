@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Sequence
 
 from ..ai.base import AIProvider
 from ..ai.mock import MockProvider
 from ..repository import Repository
+from ..settings import DEFAULT_PRODUCTS
 from .dashboard import render_dashboard
 from .excel import export_marketing_excel
 from .markdown import render_hospital_markdown
@@ -22,6 +24,8 @@ def generate_outputs(
     repository: Repository,
     target_dir: Path,
     provider: AIProvider | None = None,
+    *,
+    registered_products: Sequence[str] = DEFAULT_PRODUCTS,
 ) -> OutputManifest:
     target_dir = Path(target_dir)
     wiki_dir = target_dir / "wiki"
@@ -40,6 +44,10 @@ def generate_outputs(
         )
         path.write_text(content, encoding="utf-8")
         markdown_files.append(path)
-    dashboard = render_dashboard(repository, target_dir / "dashboard" / "index.html")
+    dashboard = render_dashboard(
+        repository,
+        target_dir / "dashboard" / "index.html",
+        registered_products=registered_products,
+    )
     excel = export_marketing_excel(repository, target_dir / "exports" / "marketing.xlsx")
     return OutputManifest(markdown_files, dashboard, excel)

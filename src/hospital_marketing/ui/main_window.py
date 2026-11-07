@@ -3,17 +3,23 @@ from __future__ import annotations
 import os
 import shutil
 from datetime import date
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..documents import SUPPORTED_EXTENSIONS
-from ..providers import ProviderConfigurationError, ProviderRequestError, sanitize_provider_error_message
-from ..settings import AppSettings, SettingsStore
+from ..providers import (
+    ProviderConfigurationError,
+    ProviderRequestError,
+    sanitize_provider_error_message,
+)
+from ..settings import SettingsStore
 from ..version import APP_VERSION
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
+from .product_keywords_dialog import ProductKeywordsDialog
 
 PATH_GUIDE_BUTTON_SIZE = 20
 PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
@@ -128,6 +134,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings_button = QtWidgets.QPushButton("AI 설정")
         self.settings_button.clicked.connect(self._open_settings)
         actions.addWidget(self.settings_button)
+        self.product_keywords_button = QtWidgets.QPushButton("검색 단어 관리")
+        self.product_keywords_button.setObjectName("product_keywords_button")
+        self.product_keywords_button.clicked.connect(self._open_product_keywords)
+        actions.addWidget(self.product_keywords_button)
         self.open_dashboard_button = QtWidgets.QPushButton("대시보드 열기")
         self.open_dashboard_button.setObjectName("open_dashboard_button")
         self.open_dashboard_button.setEnabled(False)
@@ -200,6 +210,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.source_path_edit.setText(str(settings.source_dir or ""))
             self.target_path_edit.setText(str(settings.target_dir or ""))
 
+    def _open_product_keywords(self) -> None:
+        settings = self.settings_store.load()
+        dialog = ProductKeywordsDialog(settings.product_keywords, self)
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self.settings_store.save(replace(settings, product_keywords=dialog.keywords()))
+
     def _run_import(self) -> None:
         source_text = self.source_path_edit.text().strip()
         target_text = self.target_path_edit.text().strip()
@@ -225,12 +241,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status_label.setText("읽을 파일 확장자를 하나 이상 선택해 주세요.")
             return
         settings = self.settings_store.load()
-        updated = AppSettings(
+        if not any(keyword.enabled for keyword in settings.product_keywords):
+            self.status_label.setText("검색 단어를 하나 이상 선택해 주세요.")
+            return
+        updated = replace(settings,
             source_dir=source_dir,
             target_dir=target_dir,
-            provider_id=settings.provider_id,
-            model_id=settings.model_id,
-            mock_mode=settings.mock_mode,
             enabled_extensions=selected_extensions,
         )
         self.settings_store.save(updated)

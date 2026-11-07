@@ -9,7 +9,9 @@ from openpyxl import load_workbook
 from hospital_marketing.ai.mock import MockProvider
 from hospital_marketing.domain import Channel, ContentItem, EquipmentDelivery, Hospital, MarketingMaterial
 from hospital_marketing.outputs.generate import generate_outputs
+from hospital_marketing.outputs.dashboard import render_dashboard
 from hospital_marketing.repository import Repository
+from hospital_marketing.settings import DEFAULT_PRODUCTS
 
 
 def _repository(tmp_path):
@@ -168,4 +170,35 @@ def test_manifest_contains_target_paths(tmp_path):
     assert manifest.excel == tmp_path / "target" / "exports" / "marketing.xlsx"
     assert manifest.dashboard.is_file()
     assert manifest.excel.is_file()
+    repository.close()
+
+
+def test_dashboard_product_filter_and_registered_products_kpi_use_configured_keywords(tmp_path):
+    repository = _repository(tmp_path)
+    registered_products = ("제품 A", "제품 B")
+
+    manifest = generate_outputs(
+        repository,
+        tmp_path / "target",
+        MockProvider(),
+        registered_products=registered_products,
+    )
+
+    html = manifest.dashboard.read_text(encoding="utf-8")
+    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
+    data = json.loads(payload)
+    assert data["product_keywords"] == list(registered_products)
+    assert "for (const value of registeredProducts)" in html
+    assert "card('등록 제품', registeredProducts.length" in html
+    repository.close()
+
+
+def test_direct_dashboard_render_defaults_to_existing_products(tmp_path):
+    repository = _repository(tmp_path)
+
+    dashboard = render_dashboard(repository, tmp_path / "dashboard.html")
+
+    html = dashboard.read_text(encoding="utf-8")
+    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
+    assert json.loads(payload)["product_keywords"] == list(DEFAULT_PRODUCTS)
     repository.close()

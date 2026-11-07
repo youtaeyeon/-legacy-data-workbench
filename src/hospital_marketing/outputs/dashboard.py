@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from ..domain import Hospital
 from ..repository import Repository
+from ..settings import DEFAULT_PRODUCTS
 
 
 def _safe_url(value: str) -> str | None:
@@ -45,9 +47,18 @@ def _record(repository: Repository, hospital: Hospital) -> dict:
     }
 
 
-def render_dashboard(repository: Repository, output_path: Path) -> Path:
+def render_dashboard(
+    repository: Repository,
+    output_path: Path,
+    *,
+    registered_products: Sequence[str] = DEFAULT_PRODUCTS,
+) -> Path:
     hospitals = [_record(repository, hospital) for hospital in repository.list_hospitals()]
-    payload = json.dumps({"hospitals": hospitals}, ensure_ascii=False, separators=(",", ":"))
+    payload = json.dumps(
+        {"hospitals": hospitals, "product_keywords": list(registered_products)},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     payload = payload.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,7 +115,9 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
 <script type="application/json" id="dashboard-data">__DASHBOARD_JSON_DATA__</script>
 <script>
 (() => {
-  const data = JSON.parse(document.getElementById('dashboard-data').textContent).hospitals;
+  const dashboardData = JSON.parse(document.getElementById('dashboard-data').textContent);
+  const data = dashboardData.hospitals;
+  const registeredProducts = dashboardData.product_keywords;
   const search = document.getElementById('search-filter');
   const product = document.getElementById('product-filter');
   const platform = document.getElementById('platform-filter');
@@ -133,9 +146,8 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
   const regionGroup = value => value ? value.split('/')[0] : '';
   const productsFor = h => [...h.products, ...h.deliveries.map(x => x.product_name), ...h.materials.map(x => x.product_name), ...h.contents.map(x => x.matched_product)].filter(Boolean);
   const platformsFor = h => [...h.channels.map(x => x.platform), ...h.contents.map(x => x.platform)].filter(Boolean);
-  const allProducts = unique(data.flatMap(productsFor));
   const allPlatforms = unique(data.flatMap(platformsFor));
-  for (const value of allProducts) { const option = el('option', '', value); option.value = value; product.append(option); }
+  for (const value of registeredProducts) { const option = el('option', '', value); option.value = value; product.append(option); }
   for (const value of allPlatforms) { const option = el('option', '', value); option.value = value; platform.append(option); }
 
   function addOptions(row, labels) {
@@ -223,9 +235,8 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
   function renderSales(hospitals) {
     const regions = {};
     for (const h of hospitals) { const group = regionGroup(h.region); if (group) regions[group] = (regions[group] || 0) + 1; }
-    const products = unique(hospitals.flatMap(productsFor));
     const deliveries = hospitals.reduce((count, h) => count + h.deliveries.length, 0);
-    showCards([card('전체 병원', hospitals.length, '곳'), card('지역 그룹', Object.keys(regions).length, '개 권역', 'gray'), card('등록 제품', products.length, '종', 'green'), card('납품 기록', deliveries, '건', 'gray')]);
+    showCards([card('전체 병원', hospitals.length, '곳'), card('지역 그룹', Object.keys(regions).length, '개 권역', 'gray'), card('등록 제품', registeredProducts.length, '종', 'green'), card('납품 기록', deliveries, '건', 'gray')]);
     bars('📍 지역별 현황', regions, true);
     tableHeading.textContent = '🏥 병원 목록';
     addOptions(tableHead, ['병원명', '지역', '계약일', '제품', '납품 내역']);
