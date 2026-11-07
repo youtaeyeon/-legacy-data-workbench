@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ..domain import Hospital
+from ..domain import ContentScript, Hospital
 from ..repository import Repository
 from ..settings import DEFAULT_PRODUCTS
 
@@ -17,7 +17,7 @@ def _safe_url(value: str) -> str | None:
     return value.strip()
 
 
-def _record(repository: Repository, hospital: Hospital) -> dict:
+def _record(repository: Repository, hospital: Hospital, scripts: dict[str, ContentScript]) -> dict:
     deliveries = repository.list_deliveries(hospital.hospital_id)
     materials = repository.list_materials(hospital.hospital_id)
     channels = repository.list_channels(hospital.hospital_id)
@@ -41,7 +41,7 @@ def _record(repository: Repository, hospital: Hospital) -> dict:
             for item in channels if _safe_url(item.url)
         ],
         "contents": [
-            {"platform": item.platform, "title": item.title, "url": _safe_url(item.url), "matched_product": item.matched_product or "", "published_at": item.published_at.isoformat() if item.published_at else "", "evidence": item.evidence or ""}
+            {"platform": item.platform, "title": item.title, "url": _safe_url(item.url), "matched_product": item.matched_product or "", "published_at": item.published_at.isoformat() if item.published_at else "", "evidence": item.evidence or "", "script_text": scripts[item.url].script_text if item.url in scripts else "", "script_summary": scripts[item.url].summary if item.url in scripts else "", "usage_status": scripts[item.url].usage_status if item.url in scripts else "미활용", "has_script": bool(scripts.get(item.url) and scripts[item.url].script_text)}
             for item in contents if item.relevance_status == "relevant" and _safe_url(item.url)
         ],
     }
@@ -53,7 +53,8 @@ def render_dashboard(
     *,
     registered_products: Sequence[str] = DEFAULT_PRODUCTS,
 ) -> Path:
-    hospitals = [_record(repository, hospital) for hospital in repository.list_hospitals()]
+    scripts_by_url = {script.content_url: script for script in repository.list_scripts()}
+    hospitals = [_record(repository, hospital, scripts_by_url) for hospital in repository.list_hospitals()]
     payload = json.dumps(
         {"hospitals": hospitals, "product_keywords": list(registered_products)},
         ensure_ascii=False,
@@ -80,7 +81,7 @@ main{flex:1;min-width:0;padding:48px 24px 80px}.wrap{max-width:900px;margin:0 au
 h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}.rows{display:flex;flex-direction:column;gap:4px}.rw{display:grid;grid-template-columns:112px 1fr 48px;align-items:center;gap:12px;padding:6px 8px;border-radius:4px}.rw.click{cursor:pointer}.rw:hover,.rw.on{background:var(--hover)}.rw-label{font-size:14px}.track{height:8px;background:var(--bar-soft);border-radius:2px;overflow:hidden}.fill{height:100%;background:var(--bar);border-radius:2px}.rw-count{text-align:right;color:var(--sub);font-size:13px}
 .tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}.tools input,.tools select{flex:1;min-width:150px;min-height:36px;border:1px solid var(--line);border-radius:4px;padding:5px 10px;background:var(--bg);color:var(--text);font:inherit;font-size:14px}.tools input:focus,.tools select:focus{outline:2px solid var(--sub);outline-offset:1px}.chip{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:4px;padding:3px 10px;font:inherit;font-size:13px;cursor:pointer}.chip:hover{background:var(--hover)}.chip.on{background:var(--text);color:var(--bg);border-color:var(--text)}
 .table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:620px}th{text-align:left;font-weight:500;font-size:13px;color:var(--sub);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}tbody tr:hover{background:var(--hover)}.hospital-name{font-weight:500}.sub{display:block;color:var(--sub);font-size:12px}.stack{display:flex;flex-direction:column;gap:4px}.detail{font-size:13px}.dim{color:var(--sub)}td a{color:var(--text);text-decoration:underline;text-decoration-color:var(--bar-soft);text-underline-offset:3px}td a:hover{text-decoration-color:var(--text)}
-.gal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.gal[hidden]{display:none}.vc{display:block;color:inherit;text-decoration:none;border:1px solid var(--line);border-radius:6px;overflow:hidden}.vc:hover{background:var(--hover)}.thumb{aspect-ratio:16/9;background:var(--side);display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--sub);border-bottom:1px solid var(--line)}.vb{padding:10px 12px}.vt{font-weight:500;font-size:14px;line-height:1.4;margin-bottom:6px}.vm{font-size:12px;color:var(--sub);display:flex;gap:6px;flex-wrap:wrap;align-items:center}.empty{padding:24px 10px;color:var(--sub);text-align:center}.section[hidden],.table-wrap[hidden]{display:none}
+.gal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.gal[hidden]{display:none}.vc{display:block;color:inherit;text-decoration:none;border:1px solid var(--line);border-radius:6px;overflow:hidden}.vc:hover{background:var(--hover)}.thumb{aspect-ratio:16/9;background:var(--side);display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--sub);border-bottom:1px solid var(--line)}.vb{padding:10px 12px}.vt{font-weight:500;font-size:14px;line-height:1.4;margin-bottom:6px}.vm{font-size:12px;color:var(--sub);display:flex;gap:6px;flex-wrap:wrap;align-items:center}.empty{padding:24px 10px;color:var(--sub);text-align:center}.section[hidden],.table-wrap[hidden]{display:none}.script-products{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.script-status{display:flex;flex-direction:column;gap:4px;margin:12px 0}.script-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.script-card{border:1px solid var(--line);border-radius:6px;padding:16px;cursor:pointer;background:var(--bg);color:var(--text);text-align:left;font:inherit}.script-card:hover{background:var(--hover)}.script-modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center;padding:20px;z-index:10}.script-modal[hidden]{display:none}.script-dialog{position:relative;width:min(680px,100%);max-height:85vh;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:24px}.script-close{position:absolute;right:12px;top:12px}.script-copy{margin:12px 8px 12px 0}.script-body{white-space:pre-wrap}.script-notice{color:var(--sub);font-size:13px}@media(max-width:760px){.script-cards{grid-template-columns:1fr}}
 @media(max-width:1000px){.gal{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.side{display:none}main{padding:32px 16px 64px}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.gal{grid-template-columns:1fr}h1{font-size:28px}.emoji{font-size:40px}}
 </style>
 </head>
@@ -90,6 +91,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
   <button class="side-link on" type="button" data-view="sales">💼 영업부</button>
   <button class="side-link" type="button" data-view="marketing">📣 마케팅부</button>
   <button class="side-link" type="button" data-view="content">🎬 콘텐츠 피드</button>
+  <button class="side-link" type="button" data-view="scripts">✍️ 콘텐츠 제작</button>
 </nav>
 <main><div class="wrap">
   <p class="dataset-label">MOCK DATA · MARKETING WIKI</p>
@@ -98,6 +100,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     <button class="tab on" type="button" role="tab" aria-selected="true" data-view="sales">💼 영업부</button>
     <button class="tab" type="button" role="tab" aria-selected="false" data-view="marketing">📣 마케팅부</button>
     <button class="tab" type="button" role="tab" aria-selected="false" data-view="content">🎬 콘텐츠</button>
+    <button class="tab" type="button" role="tab" aria-selected="false" data-view="scripts">✍️ 콘텐츠 제작</button>
   </div>
   <div class="kpis" id="kpis"></div>
   <section class="section" id="aggregate-section"><h2 id="aggregate-heading"></h2><div class="rows" id="aggregate"></div></section>
@@ -110,8 +113,13 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     <div class="tools" id="region-chips" aria-label="지역 필터"></div>
     <div class="table-wrap" id="table-wrap"><table><thead id="table-head"></thead><tbody id="table-body"></tbody></table><div class="empty" id="table-empty" hidden>검색 결과가 없어요.</div></div>
     <div class="gal" id="content-feed" hidden></div>
+    <div id="script-view" hidden>
+      <p class="script-notice">병원 영상·글은 병원의 저작물이므로 SNS 활용 시 사전 허락과 출처 표기가 필요합니다. 스크립트는 소재 발굴·참고용입니다.</p>
+      <div class="script-status" id="script-status"></div><div class="script-products" id="script-products"></div><div class="script-cards" id="script-cards"></div>
+    </div>
   </section>
 </div></main>
+<div class="script-modal" id="script-modal" hidden><section class="script-dialog" role="dialog" aria-modal="true" aria-labelledby="script-modal-title"><button class="chip script-close" id="script-close" type="button" aria-label="닫기">✕</button><h2 id="script-modal-title"></h2><div id="script-modal-meta" class="script-notice"></div><p id="script-modal-status"></p><h3>스크립트</h3><div id="script-modal-body" class="script-body"></div><h3>요약 · 콘텐츠 소재</h3><div id="script-modal-summary" class="script-body"></div><button class="chip script-copy" id="script-copy" type="button">스크립트 복사</button><a id="script-source-link" target="_blank" rel="noopener noreferrer">원문에서 보기</a><p class="script-notice">병원 영상·글은 병원의 저작물이므로 SNS 활용 시 사전 허락과 출처 표기가 필요합니다. 스크립트는 소재 발굴·참고용입니다.</p></section></div>
 <script type="application/json" id="dashboard-data">__DASHBOARD_JSON_DATA__</script>
 <script>
 (() => {
@@ -129,9 +137,15 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
   const tableWrap = document.getElementById('table-wrap');
   const tableEmpty = document.getElementById('table-empty');
   const feed = document.getElementById('content-feed');
+  const scriptView = document.getElementById('script-view');
+  const scriptCards = document.getElementById('script-cards');
+  const scriptProducts = document.getElementById('script-products');
+  const scriptStatus = document.getElementById('script-status');
+  const scriptModal = document.getElementById('script-modal');
   const tableHeading = document.getElementById('table-heading');
   let view = 'sales';
   let selectedRegion = '';
+  let selectedScriptProduct = '';
 
   function formatDate(value, emptyLabel) {
     return value ? value.slice(0, 10).replace(/-/g, '.') : (emptyLabel || '–');
@@ -208,7 +222,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     const query = search.value.trim().toLocaleLowerCase();
     return data.filter(h => {
       const regionMatch = !selectedRegion || regionGroup(h.region) === selectedRegion;
-      if (view === 'content') return regionMatch;
+      if (view === 'content' || view === 'scripts') return regionMatch;
       const searchable = [h.hospital_id, h.hospital_name, h.region, ...productsFor(h), ...h.deliveries.map(x => `${x.product_name} ${x.delivery_date} ${x.quantity}`), ...h.materials.map(x => `${x.product_name} ${x.material_name} ${x.quantity} ${x.status}`), ...h.channels.map(x => `${x.platform} ${x.channel_name}`), ...h.contents.map(x => `${x.platform} ${x.title} ${x.matched_product} ${x.evidence}`)].join(' ').toLocaleLowerCase();
       const productMatch = !product.value || productsFor(h).includes(product.value);
       const platformMatch = !platform.value || platformsFor(h).includes(platform.value);
@@ -294,6 +308,63 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     }
     if (!items.length) { const empty = el('div', 'empty', '조건에 맞는 콘텐츠가 없습니다.'); empty.style.gridColumn = '1 / -1'; feed.append(empty); }
   }
+  function renderScripts(hospitals) {
+    const items = hospitals.flatMap(h => h.contents.map(content => ({hospital: h, content})))
+      .filter(({hospital, content}) => {
+        const searchText = [hospital.hospital_name, content.title, content.matched_product, content.platform].join(' ').toLocaleLowerCase();
+        return (!search.value.trim() || searchText.includes(search.value.trim().toLocaleLowerCase())) && (!product.value || content.matched_product === product.value) && (!selectedScriptProduct || (selectedScriptProduct === '기타' ? !registeredProducts.includes(content.matched_product) : content.matched_product === selectedScriptProduct)) && (!platform.value || content.platform === platform.value);
+      }).sort((a, b) => (b.content.published_at || '').localeCompare(a.content.published_at || ''));
+    const counts = {'미활용': 0, '제작 중': 0, '게시 완료': 0};
+    for (const {content} of items) counts[content.usage_status] = (counts[content.usage_status] || 0) + 1;
+    const collected = items.filter(item => item.content.has_script).length;
+    showCards([card('스크립트 수집', `${collected}/${items.length}`, '건'), card('미활용', counts['미활용'], '건', 'gray'), card('제작 중', counts['제작 중'], '건'), card('게시 완료', counts['게시 완료'], '건', 'green')]);
+    const productCounts = {};
+    for (const {content} of items) { const name = registeredProducts.includes(content.matched_product) ? content.matched_product : '기타'; productCounts[name] = (productCounts[name] || 0) + 1; }
+    scriptProducts.replaceChildren();
+    for (const name of ['전체', ...Object.keys(productCounts).sort((a,b) => a.localeCompare(b, 'ko'))]) {
+      const button = el('button', `chip${(name === '전체' && !selectedScriptProduct) || selectedScriptProduct === name ? ' on' : ''}`, `${name} ${name === '전체' ? items.length : productCounts[name]}`);
+      button.type = 'button'; button.addEventListener('click', () => { selectedScriptProduct = name === '전체' ? '' : name; render(); }); scriptProducts.append(button);
+    }
+    scriptStatus.replaceChildren();
+    const maxStatus = Math.max(1, ...Object.values(counts));
+    for (const [name, count] of Object.entries(counts)) {
+      const row = el('div', `rw click${search.dataset.usageStatus === name ? ' on' : ''}`);
+      row.setAttribute('role', 'button'); row.tabIndex = 0;
+      const track = el('div', 'track'); const fill = el('div', 'fill'); fill.style.width = `${count / maxStatus * 100}%`; track.append(fill);
+      row.append(el('div', 'rw-label', name), track, el('div', 'rw-count', `${count}건`));
+      const toggleStatus = () => { search.dataset.usageStatus = search.dataset.usageStatus === name ? '' : name; render(); };
+      row.addEventListener('click', toggleStatus); row.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleStatus(); } }); scriptStatus.append(row);
+    }
+    const shown = search.dataset.usageStatus ? items.filter(({content}) => content.usage_status === search.dataset.usageStatus) : items;
+    scriptCards.replaceChildren();
+    for (const {hospital, content} of shown) {
+      const button = el('button', 'script-card'); button.type = 'button';
+      button.append(el('div', 'vt', content.title), el('div', 'vm', `${hospital.hospital_name} · ${formatDate(content.published_at, '날짜 미입력')}`), el('span', `tag ${content.usage_status === '게시 완료' ? 'green' : content.usage_status === '미활용' ? 'gray' : ''}`, content.usage_status), el('div', 'sub', content.has_script ? '스크립트 보기 ›' : '스크립트 수집 전'));
+      button.addEventListener('click', () => openScriptModal(hospital, content)); scriptCards.append(button);
+    }
+    if (!shown.length) scriptCards.append(el('div', 'empty', '조건에 맞는 콘텐츠가 없습니다.'));
+    tableHeading.textContent = '✍️ 콘텐츠 제작 현황';
+  }
+  function openScriptModal(hospital, content) {
+    document.getElementById('script-modal-title').textContent = content.title;
+    document.getElementById('script-modal-meta').textContent = `${hospital.hospital_name} · ${content.platform} · ${formatDate(content.published_at, '날짜 미입력')}`;
+    document.getElementById('script-modal-status').textContent = content.usage_status;
+    document.getElementById('script-modal-body').textContent = content.script_text || '스크립트 수집 전';
+    document.getElementById('script-modal-summary').textContent = content.script_summary || '요약·콘텐츠 소재가 없습니다.';
+    const source = document.getElementById('script-source-link');
+    const safe = new URL(content.url, window.location.href);
+    if (['http:', 'https:'].includes(safe.protocol)) { source.href = safe.href; source.hidden = false; } else source.hidden = true;
+    scriptModal.hidden = false; document.getElementById('script-close').focus();
+  }
+  function closeScriptModal() { scriptModal.hidden = true; }
+  document.getElementById('script-close').addEventListener('click', closeScriptModal);
+  scriptModal.addEventListener('click', event => { if (event.target === scriptModal) closeScriptModal(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !scriptModal.hidden) closeScriptModal(); });
+  document.getElementById('script-copy').addEventListener('click', async () => {
+    const body = document.getElementById('script-modal-body');
+    try { if (!navigator.clipboard) throw new Error('clipboard unavailable'); await navigator.clipboard.writeText(body.textContent); document.getElementById('script-modal-status').textContent = '복사했습니다.'; }
+    catch { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(body); selection.removeAllRanges(); selection.addRange(range); document.getElementById('script-modal-status').textContent = '복사 실패 — 스크립트가 선택되었습니다. 직접 복사해 주세요.'; }
+  });
   function render() {
     document.querySelectorAll('[data-view]').forEach(button => {
       const active = button.dataset.view === view;
@@ -303,10 +374,13 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     renderChips();
     const hospitals = filteredHospitals();
     const contentView = view === 'content';
-    document.getElementById('aggregate-section').hidden = contentView;
-    tableWrap.hidden = contentView;
+    const scriptsView = view === 'scripts';
+    document.getElementById('aggregate-section').hidden = contentView || scriptsView;
+    tableWrap.hidden = contentView || scriptsView;
     feed.hidden = !contentView;
+    scriptView.hidden = !scriptsView;
     if (contentView) { tableEmpty.hidden = true; renderContent(hospitals); }
+    else if (scriptsView) renderScripts(hospitals);
     else if (view === 'marketing') renderMarketing(hospitals);
     else renderSales(hospitals);
   }

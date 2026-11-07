@@ -57,6 +57,8 @@ fixtures/source/weekly/
 
 앱에서 Source/Target 폴더를 지정하고 읽을 확장자를 선택합니다. 선택한 폴더 바로 아래에 있는 파일만 읽고, 하위 폴더는 처리하지 않습니다. 따라서 날짜별 목업 업데이트는 `data/source/20261102`, `20261103`, `20261106` 폴더를 하나씩 차례로 선택합니다. 상위 폴더 `data/source`를 선택하면 읽은 파일 0개와 병원 변경 없음이 보고서와 앱 결과에 표시됩니다.
 
+`ContentCandidates` 시트의 제품 관련 콘텐츠를 `Scripts` 시트(`content_url`, `script_text`, `summary`, `usage_status`, `collected_at`)로 연결할 수 있습니다. `Scripts` 시트는 선택 사항이며, 활용 상태는 `미활용`·`제작 중`·`게시 완료`를 사용합니다. 스크립트가 있고 요약이 비어 있으면 설정된 AI 제공자가 요약을 제안합니다(목업 모드는 규칙 기반). 실제 YouTube·블로그에 접속해 수집하지 않습니다.
+
 ## 결과 폴더
 
 ```text
@@ -64,12 +66,16 @@ target/
 ├── data/app.db
 ├── wiki/<hospital_id>.md
 ├── wiki/source-documents/<relative-name>_<extension>.md
+├── scripts/index.json
+├── scripts/<hospital_id>/<YYYY-MM|undated>/<content>.md
 ├── dashboard/index.html
 ├── exports/marketing.xlsx
 └── reports/last-import.json
 ```
 
-대시보드 HTML은 브라우저에서 직접 열어 검색·제품·플랫폼 필터를 사용할 수 있습니다. 결과를 공유하려면 HTML 파일 또는 target 폴더를 전달합니다.
+대시보드 HTML은 브라우저에서 직접 열어 검색·제품·플랫폼 필터를 사용할 수 있습니다. 콘텐츠 제작 탭의 스크립트는 사용자가 제공한 원본 `Scripts` 시트에서 읽으며, 웹/SNS를 자동 수집하지 않습니다. `target/scripts/` 파일은 DB에서 다시 생성되는 결과물이므로 직접 편집하지 마세요(다음 실행 때 덮어씁니다). 활용 상태 변경은 원본 `Scripts` 시트를 고쳐 다시 가져옵니다. 스크립트 파일 정리는 `target/scripts/` 안에서만 이뤄집니다. 병원 콘텐츠는 저작권이 있으므로 SNS 활용 전 사전 허락과 출처 표기가 필요합니다.
+
+결과를 공유하려면 HTML 파일 또는 target 폴더를 전달합니다.
 
 ## Windows EXE 만들기
 

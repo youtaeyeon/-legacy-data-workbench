@@ -50,6 +50,15 @@ class ContentItem:
 
 
 @dataclass(frozen=True)
+class ContentScript:
+    content_url: str
+    script_text: str
+    summary: str
+    usage_status: str
+    collected_at: date | None
+
+
+@dataclass(frozen=True)
 class FieldChange:
     hospital_id: str
     field_name: str

@@ -9,22 +9,26 @@ from hospital_marketing.settings import SettingsStore
 from hospital_marketing.workflow import ImportWorkflow
 
 SAMPLE_ROOT = Path(__file__).resolve().parents[1] / "data" / "source"
-EXPECTED = (("20261102", 14, 0), ("20261103", 3, 14), ("20261106", 4, 17))
+EXPECTED = (("20261102", 14, 0, 0), ("20261103", 3, 1, 14), ("20261106", 4, 0, 17))
 
 
 def test_sample_contract_folders_import_incrementally(tmp_path):
     workflow = ImportWorkflow(SettingsStore(tmp_path / "settings.json"))
     target = tmp_path / "target"
 
-    for folder, inserted, unchanged in EXPECTED:
+    for folder, inserted, updated, unchanged in EXPECTED:
         result = workflow.run(SAMPLE_ROOT / folder, target, enabled_extensions=(".xlsx",))
         report = result.report
         assert report.issues == [], folder
         assert report.files_failed == 0, folder
-        assert (report.inserted_count, report.updated_count, report.unchanged_count) == (inserted, 0, unchanged), folder
+        assert (report.inserted_count, report.updated_count, report.unchanged_count) == (inserted, updated, unchanged), folder
         assert report.missing_hospital_ids == [], folder
 
     assert len(list((target / "wiki").glob("HM-*.md"))) == 21
+    script_index = json.loads((target / "scripts" / "index.json").read_text(encoding="utf-8"))
+    assert len(script_index["scripts"]) == 4
+    assert {item["usage_status"] for item in script_index["scripts"]} == {"미활용", "제작 중", "게시 완료"}
+    assert all(item["content_url"].startswith("https://example.test/") for item in script_index["scripts"])
 
 
 def test_root_folder_ignores_nested_snapshots_and_reports_zero_files(tmp_path):

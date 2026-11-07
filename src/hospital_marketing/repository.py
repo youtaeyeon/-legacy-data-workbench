@@ -6,7 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
 
-from .domain import Channel, ContentItem, EquipmentDelivery, FieldChange, Hospital, MarketingMaterial
+from .domain import Channel, ContentItem, ContentScript, EquipmentDelivery, FieldChange, Hospital, MarketingMaterial
 
 
 SCHEMA = """
@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS contents (
     relevance_status TEXT NOT NULL,
     evidence TEXT,
     UNIQUE(hospital_id, platform, url)
+);
+CREATE TABLE IF NOT EXISTS content_scripts (
+    content_url TEXT PRIMARY KEY,
+    script_text TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    usage_status TEXT NOT NULL DEFAULT '미활용',
+    collected_at TEXT
 );
 """
 
@@ -235,6 +242,25 @@ class Repository:
                 content.evidence,
             ),
         )
+
+    def upsert_script(self, script: ContentScript) -> bool:
+        old = self.connection.execute("SELECT * FROM content_scripts WHERE content_url=?", (script.content_url,)).fetchone()
+        values = (script.script_text, script.summary or (old["summary"] if old else ""), script.usage_status, _iso(script.collected_at))
+        columns = ("script_text", "summary", "usage_status", "collected_at")
+        if old is not None and tuple(old[key] for key in columns) == values:
+            return False
+        self.connection.execute(
+            """INSERT INTO content_scripts (content_url, script_text, summary, usage_status, collected_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(content_url) DO UPDATE SET script_text=excluded.script_text,
+                 summary=excluded.summary, usage_status=excluded.usage_status, collected_at=excluded.collected_at""",
+            (script.content_url, *values),
+        )
+        return old is not None
+
+    def list_scripts(self) -> list[ContentScript]:
+        rows = self.connection.execute("SELECT * FROM content_scripts ORDER BY content_url").fetchall()
+        return [ContentScript(row["content_url"], row["script_text"], row["summary"], row["usage_status"], _as_date(row["collected_at"])) for row in rows]
 
     def list_contents(self, hospital_id: str) -> list[ContentItem]:
         rows = self.connection.execute(
