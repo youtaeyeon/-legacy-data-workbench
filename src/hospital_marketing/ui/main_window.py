@@ -15,7 +15,13 @@ from ..providers import (
     ProviderRequestError,
     sanitize_provider_error_message,
 )
-from ..settings import SettingsStore
+from ..documents.size_warnings import (
+    LargeSourceFile,
+    find_large_source_files,
+    format_large_source_file_list,
+    format_large_source_file_prompt,
+)
+from ..settings import AppSettings, SettingsStore
 from ..version import APP_VERSION
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
@@ -216,6 +222,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             self.settings_store.save(replace(settings, product_keywords=dialog.keywords()))
 
+    def _confirm_large_source_files(self, files: list[LargeSourceFile]) -> bool:
+        message_box = QtWidgets.QMessageBox(self)
+        message_box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        message_box.setWindowTitle("큰 원본 파일 경고")
+        message_box.setText(format_large_source_file_prompt(files))
+        continue_button = message_box.addButton("계속", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        cancel_button = message_box.addButton("취소", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        message_box.setDefaultButton(cancel_button)
+        message_box.exec()
+        return message_box.clickedButton() is continue_button
+
     def _run_import(self) -> None:
         source_text = self.source_path_edit.text().strip()
         target_text = self.target_path_edit.text().strip()
@@ -244,11 +261,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not any(keyword.enabled for keyword in settings.product_keywords):
             self.status_label.setText("검색 단어를 하나 이상 선택해 주세요.")
             return
+        large_source_files = find_large_source_files(
+            source_dir,
+            selected_extensions,
+            exclude_dir=target_dir,
+        )
         updated = replace(settings,
             source_dir=source_dir,
             target_dir=target_dir,
             enabled_extensions=selected_extensions,
         )
+        if large_source_files and not updated.mock_mode and not self._confirm_large_source_files(large_source_files):
+            self.status_label.setText("큰 원본 파일 경고로 처리를 취소했습니다.")
+            return
         self.settings_store.save(updated)
         self.run_button.setEnabled(False)
         self.status_label.setText("선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다.")
@@ -266,11 +291,23 @@ class MainWindow(QtWidgets.QMainWindow):
             report = result.report
             status = (
                 f"처리 완료 · 읽은 파일 {report.files_seen} · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
-                f"변경 없음 {report.unchanged_count} · 오류 {len(report.issues)} · "
+                f"변경 없음 {report.unchanged_count} · 오류 {sum(issue.code != 'large_source_file' for issue in report.issues)} · "
                 f"분류 {result.classified_count} · 검토 필요 {result.needs_review_count}"
             )
             if report.files_seen == 0:
                 status += " · 읽을 파일이 없습니다. 선택 확장자 파일이 폴더 바로 아래에 있는지 확인하세요."
+            if large_source_files:
+                details = format_large_source_file_list(large_source_files)
+                if updated.mock_mode:
+                    status += (
+                        f"\n실제 AI로 실행하면 입력 한도를 넘을 수 있는 파일 {len(large_source_files)}개:\n"
+                        f"{details}"
+                    )
+                else:
+                    status += (
+                        f"\n큰 원본 파일 {len(large_source_files)}개를 처리했습니다. "
+                        f"AI 입력 한도를 넘을 수 있습니다.\n{details}"
+                    )
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
         except (ProviderConfigurationError, ProviderRequestError) as exc:
