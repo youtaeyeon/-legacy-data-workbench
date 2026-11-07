@@ -5,21 +5,26 @@
 ## 흐름 한눈에 보기
 
 ```
-wsl-hermes ──(feat/* 푸시 + PR 생성, 라벨 needs-review)──▶ wsl-claude
-wsl-claude ──(검토 통과 → PR을 main에 merge)──────────────▶ windows-claude
-wsl-claude ──(수정 필요 → 라벨 changes-requested)─────────▶ wsl-hermes
-windows-claude ──(테스트 실패 → 이슈, 라벨 windows-test-failed)──▶ wsl-hermes
-windows-claude ──(사용자가 요청하면 → EXE 빌드 후 GitHub Releases에 zip 업로드)
+고객(사용자) ──(피드백을 말로 전달)──────────────────────────▶ wsl-claude(PM)
+wsl-claude ──(작업 단위 이슈 + 라벨 ready-for-dev)───────────▶ wsl-hermes
+wsl-hermes ──(feat/* 푸시 + PR 생성, 라벨 needs-review)──────▶ wsl-claude
+wsl-claude ──(수정 필요 → 라벨 changes-requested)─────────────▶ wsl-hermes
+wsl-claude ──(검토 통과 → merge, PR에 라벨 needs-windows-test)──▶ windows-claude
+windows-claude ──(실패 → 이슈, 라벨 windows-test-failed)───────▶ wsl-hermes
+windows-claude ──(통과 → EXE 로컬 빌드, 라벨 ready-for-user-test, 알림)──▶ 고객
+windows-claude ──(고객이 요청하면 → GitHub Releases에 zip 업로드)
 ```
 
 에이전트끼리의 신호는 모두 **GitHub PR·이슈·라벨**로 주고받습니다. 저장소: `youtaeyeon/-legacy-data-workbench`
+
+사용자는 **고객**이고, `wsl-claude`가 **PM**입니다. 고객 피드백은 `wsl-claude`가 이슈로 정리하고, 개발 순서를 `ready-for-dev` 라벨로 정합니다. 각 역할은 아래 "자동 실행"에 따라 10분마다 자기 차례의 라벨만 확인해서 처리합니다.
 
 ## 내 역할 찾기
 
 | 역할 | 누구 | 작업 폴더 | 하는 일 |
 |---|---|---|---|
 | `wsl-hermes` | WSL Ubuntu의 Hermes Agent | `~/hospital-marketing-mvp` | 기능 개발, 버그 수정 |
-| `wsl-claude` | WSL Ubuntu의 Claude Code | `~/hospital-marketing-mvp-review` | PR 검토, main merge |
+| `wsl-claude` | WSL Ubuntu의 Claude Code | `~/hospital-marketing-mvp-review` | PM(이슈 작성·우선순위), PR 검토, main merge |
 | `windows-claude` | Windows의 Claude Code | `C:\work\hospital-marketing-mvp` | main pull 후 Windows 테스트 |
 
 - 내가 Hermes면 → `wsl-hermes`
@@ -35,7 +40,50 @@ windows-claude ──(사용자가 요청하면 → EXE 빌드 후 GitHub Releas
 4. 브랜치 이름: `feat/<주제>`, `fix/<주제>`, `test/<주제>`, `docs/<주제>`, `chore/<주제>`. 영문 소문자와 하이픈만 씁니다.
 5. 커밋 메시지는 한국어나 영어로 무엇을 왜 바꿨는지 한 줄로 씁니다. 커밋 하나에는 관련된 변경만 담습니다.
 6. 테스트가 실패한 상태로 PR을 열거나 merge하지 않습니다.
-7. 쓰는 라벨: `needs-review`, `changes-requested`, `windows-test-failed`. 라벨이 없으면 `gh label create <이름>`으로 만듭니다.
+7. 쓰는 라벨은 아래 "자동 실행"의 라벨 표에 있습니다.
+8. **`gh pr edit --add-label/--remove-label`은 이 저장소에서 오류가 납니다**(Projects classic 지원 종료). 라벨은 REST로 바꿉니다. 이슈와 PR 모두 같은 명령입니다.
+   ```bash
+   gh api repos/youtaeyeon/-legacy-data-workbench/issues/<번호>/labels -f 'labels[]=<추가할 라벨>'
+   gh api -X DELETE repos/youtaeyeon/-legacy-data-workbench/issues/<번호>/labels/<지울 라벨>
+   ```
+
+## 자동 실행 (10분 간격)
+
+각 역할은 스케줄러로 10분마다 아래 순서로 실행합니다.
+1. **먼저 셸에서 `gh`로 할 일이 있는지만 확인합니다.** 없으면 AI 세션을 띄우지 않고 바로 끝냅니다. 할 일이 없을 때 AI 사용량은 0이어야 합니다.
+2. **잠금:** 같은 역할의 이전 실행이 아직 돌고 있으면 건너뜁니다(Linux `flock`, Windows 잠금 파일). 잠금이 2시간 넘게 남아 있으면 로그에 경고를 남깁니다.
+3. 할 일이 있으면 AI 세션을 실행해 **한 번에 한 건만** 처리하고 끝냅니다.
+4. 실행 기록은 각자 로컬 로그 파일에 남기고, git에는 커밋하지 않습니다.
+5. `needs-human` 라벨이 붙은 이슈·PR은 아무 역할도 자동으로 처리하지 않습니다.
+
+### 라벨 표
+
+| 라벨 | 붙이는 쪽 | 가져가는 쪽 | 뜻 |
+|---|---|---|---|
+| `ready-for-dev` | wsl-claude | wsl-hermes | 개발해도 되는 이슈 |
+| `in-progress` | 작업을 시작한 역할 | — | 작업 중 표시. 끝나면 직접 뗍니다 |
+| `needs-review` | wsl-hermes | wsl-claude | 검토할 PR |
+| `changes-requested` | wsl-claude | wsl-hermes | 고칠 점이 있는 PR |
+| `needs-windows-test` | wsl-claude(merge 직후 PR에) | windows-claude | Windows 테스트 대기 |
+| `windows-test-failed` | windows-claude(이슈에) | wsl-hermes | Windows 테스트 실패 |
+| `ready-for-user-test` | windows-claude(PR에) | 고객 | 고객이 EXE로 확인할 차례 |
+| `needs-human` | 누구나 | 사람 | 자동 처리 중단. 고객이나 PM이 확인합니다 |
+
+### 역할별 확인 명령과 처리 순서
+
+- **wsl-hermes:** 위에서부터 첫 번째로 해당하는 한 건만 처리합니다.
+  1. `gh issue list --state open --label windows-test-failed`
+  2. `gh pr list --state open --label changes-requested`
+  3. `in-progress` 라벨이 붙은 열린 이슈가 없을 때만: `gh issue list --state open --label ready-for-dev`에서 **번호가 가장 작은** 이슈
+  - 이슈를 시작하면 `ready-for-dev`를 떼고 `in-progress`를 붙입니다. PR을 열면 그 이슈의 `in-progress`를 뗍니다.
+- **wsl-claude:** `gh pr list --state open --label needs-review`에서 번호가 가장 작은 PR 한 건을 검토합니다.
+- **windows-claude:** `gh pr list --state merged --label needs-windows-test`가 있으면 최신 main을 **한 번** 테스트하고, 결과를 그 PR들에 함께 반영합니다.
+
+### 무한 반복 방지
+
+- 같은 PR에 wsl-claude의 수정 요청이 **3번째**가 되면, 더 요청하지 않고 `needs-human`을 붙인 뒤 이유를 댓글로 남깁니다.
+- 같은 문제로 `windows-test-failed` 이슈가 **3번째** 생기면, 새로 만들지 않고 기존 이슈에 `needs-human`을 붙입니다.
+- 작업 도중 판단할 수 없는 문제(요구사항이 모호함, 외부 계정이나 결제가 필요함, 다른 역할의 폴더를 고쳐야 함)를 만나면, 추측해서 진행하지 말고 `needs-human`과 함께 질문을 댓글로 남깁니다.
 
 ## 프로젝트 기본 정보
 
@@ -77,13 +125,10 @@ $env:QT_QPA_PLATFORM = "offscreen"; .\.venv\Scripts\python.exe -m pytest -q; Rem
 
 ### 작업 시작 전
 1. `git fetch origin && git switch main && git pull --ff-only`
-2. 처리할 일을 이 순서로 확인합니다.
-   1. 라벨이 `windows-test-failed`인 열린 이슈: `gh issue list --label windows-test-failed`
-   2. 라벨이 `changes-requested`인 내 PR: `gh pr list --label changes-requested`
-   3. 사용자가 지시한 새 기능
+2. 처리할 일은 위 "자동 실행"의 wsl-hermes 순서대로 한 건만 고릅니다. `ready-for-dev`가 없는 이슈는 시작하지 않습니다(PM이 아직 승인하지 않은 일).
 
 ### 새 작업
-1. `git switch -c feat/<주제>` (버그는 `fix/<주제>`)
+1. 이슈에서 `ready-for-dev`를 떼고 `in-progress`를 붙인 뒤, main에서 `git switch -c feat/<주제>` (버그는 `fix/<주제>`)
 2. 구현과 함께 테스트를 추가하거나 고칩니다. 동작을 바꾸는 변경에는 테스트가 있어야 합니다.
 3. 전체 테스트를 통과시킵니다(위 WSL 테스트 명령).
 4. 커밋하고 `git push -u origin <브랜치>`
@@ -91,12 +136,12 @@ $env:QT_QPA_PLATFORM = "offscreen"; .\.venv\Scripts\python.exe -m pytest -q; Rem
    ```bash
    gh pr create --base main --label needs-review --title "<요약>" --body "<무엇을/왜/어떻게 테스트했는지, 관련 이슈가 있으면 Fixes #번호>"
    ```
-6. 사용자에게 PR 링크를 알리고 검토를 기다립니다. **직접 merge하지 않습니다.**
+6. 이슈의 `in-progress`를 뗍니다. 새로 만든 파일이 untracked로 빠지지 않았는지 `git status`로 확인합니다. **직접 merge하지 않습니다.** 검토는 wsl-claude가 자동으로 가져갑니다.
 
 ### 검토 의견 반영 (`changes-requested`)
 1. `gh pr view <번호> --comments`로 지적 사항을 읽습니다.
 2. 같은 브랜치에서 고치고 테스트한 뒤 푸시합니다.
-3. 라벨을 바꿉니다: `gh pr edit <번호> --remove-label changes-requested --add-label needs-review`
+3. 라벨을 바꿉니다: `changes-requested`를 떼고 `needs-review`를 붙입니다(공통 규칙 8의 REST 명령).
 4. PR에 무엇을 고쳤는지 댓글을 남깁니다.
 
 ### 릴리스용 버전 올리기
@@ -135,12 +180,13 @@ gh pr list --label needs-review
      gh pr comment <번호> --body "검토 통과: <요약>. 테스트 N개 통과."
      gh pr merge <번호> --squash --delete-branch
      ```
-     merge하면 `windows-claude`가 테스트할 차례입니다. 사용자에게 merge 사실과 커밋 해시를 알립니다.
-   - **수정 필요:**
-     ```bash
-     gh pr comment <번호> --body "<파일:줄 단위로 구체적인 지적 사항>"
-     gh pr edit <번호> --remove-label needs-review --add-label changes-requested
-     ```
+     merge한 뒤 PR에서 `needs-review`를 떼고 `needs-windows-test`를 붙입니다. 이제 `windows-claude`가 테스트할 차례입니다.
+   - **수정 필요:** `gh pr comment <번호> --body "wsl-claude 리뷰: 수정 요청 …(파일:줄 단위 지적 사항)"`을 남기고, `needs-review`를 떼고 `changes-requested`를 붙입니다. 이번이 이 PR의 3번째 수정 요청이면 `needs-human`을 붙입니다.
+
+### PM 업무
+- 고객이 말한 피드백은 작업 단위로 나눠 이슈를 만듭니다. 각 이슈에는 현상, 요구사항, 테스트 기준을 적습니다.
+- 개발할 순서가 된 이슈에만 `ready-for-dev`를 붙입니다. 급한 이슈는 번호가 작지 않아도, 다른 이슈의 `ready-for-dev`를 잠시 떼서 먼저 하게 합니다.
+- `needs-human`이 붙은 항목은 고객에게 알리고, 결정이 나면 라벨을 정리합니다.
 6. 같은 GitHub 계정이라 GitHub의 정식 "Approve"는 쓸 수 없습니다. 검토 결과는 댓글로 남깁니다.
 
 ---
@@ -171,13 +217,14 @@ winget install --id GitHub.cli -e
 4. 전체 테스트를 실행합니다(위 Windows 테스트 명령).
 5. 앱 실행 확인: `.\.venv\Scripts\python.exe -m hospital_marketing.app`를 실행해 창이 뜨는지 봅니다. 사용자가 함께 있으면 `data\source\20261102` → `20261103` → `20261106`을 차례로 가져와 대시보드를 열어 달라고 요청합니다.
 6. 사용자가 EXE 확인을 원하면 `.\scripts\package_windows.ps1`로 빌드하고 `dist-win\HospitalMarketingMVP\HospitalMarketingMVP.exe`를 실행합니다.
-7. 결과를 보고합니다.
-   - **성공:** 방금 merge된 PR에 댓글을 남깁니다. `gh pr comment <번호> --body "Windows 테스트 통과 (<커밋 해시>): pytest N개 통과, 앱 실행 확인"`
-   - **실패:** 이슈를 만듭니다.
+7. 결과를 보고합니다. 대상은 `needs-windows-test` 라벨이 붙은 merge된 PR 전부입니다.
+   - **성공:** 각 PR에 `Windows 테스트 통과 (<커밋 해시>): pytest N개 통과, 앱 실행 확인, PR별 확인 항목` 댓글을 남깁니다. 그다음 `scripts\package_windows.ps1`로 EXE를 **로컬에만** 빌드합니다(릴리스하지 않음). 각 PR에서 `needs-windows-test`를 떼고 `ready-for-user-test`를 붙입니다. 마지막으로 Windows 알림(토스트)으로 고객에게 "테스트할 EXE 준비됨: <EXE 경로>, <PR 목록>"을 알립니다.
+   - **실패:** 이슈를 만들고, 원인이 된 PR에서 `needs-windows-test`를 뗍니다.
      ```powershell
-     gh issue create --label windows-test-failed --title "Windows 테스트 실패: <요약>" --body "<커밋 해시, 실패한 명령, 오류 로그 핵심 부분, 재현 방법>"
+     gh issue create --label windows-test-failed --title "Windows 테스트 실패: <요약>" --body "<커밋 해시, 관련 PR, 실패한 명령, 오류 로그 핵심 부분, 재현 방법>"
      ```
      코드는 직접 고치지 않습니다. 수정은 `wsl-hermes`가 합니다.
+   - 자동 실행 중에는 사용자 조작이 필요한 단계(5단계의 데이터 가져오기 요청 등)를 건너뜁니다. 대신 UI Automation이나 offscreen으로 확인할 수 있는 만큼만 확인합니다.
 8. 이 폴더에서는 커밋하거나 푸시하지 않습니다. 아래 릴리스 절차의 `gh release create`(태그 생성)만 예외입니다.
 
 ### 릴리스 (EXE 배포)
