@@ -18,6 +18,10 @@ class MockProvider:
                 return RelevanceResult("relevant", product, f"제품 항목에서 제품명 '{product}' 확인")
         return RelevanceResult("irrelevant", None, "제품명이 확인되지 않아 관련 콘텐츠에서 제외")
 
+    def summarize_script(self, script_text: str) -> str:
+        sentence = script_text.strip().splitlines()[0][:120] if script_text.strip() else ""
+        return f"목업 요약: {sentence}" if sentence else ""
+
     def summarize_hospital(self, hospital: Hospital) -> str:
         region = hospital.region or "지역 정보 미입력"
         contract = hospital.contract_date.isoformat() if hospital.contract_date else "계약일 미입력"

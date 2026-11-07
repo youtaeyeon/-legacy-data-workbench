@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from ..ai.base import AIProvider
 from ..ai.mock import MockProvider
 from ..domain import Channel, ContentItem, EquipmentDelivery, Hospital, MarketingMaterial
+from .scripts import NOTICE
 
 
 def _text(value: object) -> str:
@@ -26,6 +27,8 @@ def render_hospital_markdown(
     channels: list[Channel],
     contents: list[ContentItem],
     provider: AIProvider | None = None,
+    *,
+    scripts: list[dict] | None = None,
 ) -> str:
     provider = provider or MockProvider()
     relevant = [item for item in contents if item.relevance_status == "relevant"]
@@ -70,4 +73,10 @@ def render_hospital_markdown(
             lines.append(f"- {linked_title} · {_text(item.matched_product)} · {_text(item.evidence)}")
     else:
         lines.append("확인된 제품 관련 콘텐츠가 없습니다.")
+    lines.extend(["", "## 스크립트", ""])
+    if scripts:
+        lines.extend(f"- [{_text(entry['title'])} · {_text(entry['usage_status'])}](../scripts/{entry['path']})" for entry in scripts)
+    else:
+        lines.append("등록된 콘텐츠 스크립트가 없습니다.")
+    lines.extend(["", f"> {NOTICE}"])
     return "\n".join(lines) + "\n"

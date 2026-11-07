@@ -109,6 +109,15 @@ def test_dashboard_reference_is_preserved_under_docs_design():
     assert "240px 사이드바" in html
 
 
+def test_dashboard_reference2_is_preserved_under_docs_design():
+    reference = Path(__file__).resolve().parents[1] / "docs" / "design" / "dashboard-reference2.html"
+
+    assert reference.is_file()
+    html = reference.read_text(encoding="utf-8")
+    assert "콘텐츠 제작" in html
+    assert "스크립트 복사" in html
+
+
 def test_dashboard_keeps_mock_label_and_formats_visible_dates(tmp_path):
     repository = _repository(tmp_path)
 

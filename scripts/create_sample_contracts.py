@@ -37,7 +37,7 @@ def contract_day(i):
 
 
 def rows_for(n, file_date):
-    hosp, dlv, mat, ch, cont = [], [], [], [], []
+    hosp, dlv, mat, ch, cont, scripts = [], [], [], [], [], []
     for i in range(n):
         name, region, rep = H[i]
         hid = f'HM-{i + 1:03d}'
@@ -50,6 +50,9 @@ def rows_for(n, file_date):
         mat.append([hid, p, '제품 소개 리플릿', 10, '준비 완료' if i % 2 == 0 else '준비 중'])
         ch.append([hid, plat, f'{name} 공식 {plat}', f'{slug}/{plat.lower()}'])
         cont.append([hid, plat, f'{p} 시술 후기', f'{slug}/content/1', f'{name}의 {p} 관련 목업 게시물', cd, p, 'relevant'])
+        if i in (0, 1, 2, 3):
+            status = ('제작 중' if file_date != '20261102' else '미활용') if i == 0 else ('제작 중' if i == 1 else '게시 완료' if i == 2 else '미활용')
+            scripts.append([f'{slug}/content/1', f'(샘플) {p}에 관한 가상 콘텐츠 안내 문장입니다.', '' if i == 1 else f'{p}의 가상 콘텐츠 소재', status, date(2026, 11, 2)])
         if i % 4 == 3:  # 분류 테스트용 무관 콘텐츠
             cont.append([hid, plat, '연말 이벤트 안내', f'{slug}/content/2', '제품과 무관한 병원 공지 목업', cd, None, 'irrelevant'])
     return {
@@ -58,6 +61,7 @@ def rows_for(n, file_date):
         'Materials': (['hospital_id', 'product_name', 'material_name', 'quantity', 'status'], mat),
         'Channels': (['hospital_id', 'platform', 'channel_name', 'url'], ch),
         'ContentCandidates': (['hospital_id', 'platform', 'title', 'url', 'description', 'published_at', 'matched_product', 'expected_relevance'], cont),
+        'Scripts': (['content_url', 'script_text', 'summary', 'usage_status', 'collected_at'], scripts),
     }
 
 
