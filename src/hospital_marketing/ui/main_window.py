@@ -56,8 +56,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QCheckBox { color: #000000; }
             QPushButton { min-height: 36px; border: 1px solid rgba(9,34,63,0.18); border-radius: 4px; padding: 4px 14px; background: #faf7ee; color: #09223f; }
             QPushButton:hover { background: #e9e3d3; }
-            QPushButton#run_import_button { background: #09223f; color: #f3eee2; font-weight: 700; }
-            QPushButton#open_dashboard_button { background: #245c9e; color: #ffffff; font-weight: 600; }
+            QPushButton#run_import_button:enabled { background: #09223f; color: #f3eee2; font-weight: 700; }
+            QPushButton#open_dashboard_button:enabled { background: #245c9e; color: #ffffff; font-weight: 600; }
             QPushButton:disabled { color: #7a7f83; background: #e9e3d3; }
             QLabel#status_label { background: #e9e3d3; border-left: 4px solid #5d6c58; border-radius: 4px; padding: 10px 12px; color: #09223f; }
             QToolButton#path_guide_button { border: 1.5px solid #09223f; border-radius: 10px; background: #f3eee2; color: #09223f; font-size: 12px; font-weight: 700; padding: 0; }

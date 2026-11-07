@@ -621,3 +621,27 @@ def test_settings_default_to_offline_mock_mode(tmp_path):
 
     assert dialog.mock_mode_checkbox.isChecked()
     assert dialog.provider_combo.currentText() == "mock"
+
+
+def test_disabled_primary_buttons_use_disabled_colors_and_restore_enabled_styles(tmp_path):
+    _app()
+    window = MainWindow(
+        SettingsStore(tmp_path / "settings.json"),
+        FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"),
+    )
+    window.show()
+    _app().processEvents()
+
+    def background(button):
+        image = button.grab().toImage()
+        return image.pixelColor(6, image.height() // 2).name()
+
+    window.run_button.setEnabled(False)
+    assert background(window.run_button) == "#e9e3d3"
+    assert background(window.open_dashboard_button) == "#e9e3d3"
+
+    window.run_button.setEnabled(True)
+    window.open_dashboard_button.setEnabled(True)
+    assert background(window.run_button) == "#09223f"
+    assert background(window.open_dashboard_button) == "#245c9e"
+    window.close()
