@@ -98,7 +98,7 @@ def test_windows_cmd_receives_untrusted_prompt_only_via_stdin(
 
     monkeypatch.setattr(
         "hospital_marketing.ai.adapters.local_cli_provider.os",
-        SimpleNamespace(name="nt", environ=os.environ),
+        SimpleNamespace(name="nt", environ={**os.environ, "COMSPEC": "cmd.exe"}),
     )
     monkeypatch.setattr(
         "hospital_marketing.ai.adapters.local_cli_provider.shutil.which",
