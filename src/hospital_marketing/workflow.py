@@ -9,6 +9,7 @@ from typing import Callable
 from .ai.registry import ProviderRegistry
 from .credentials import CredentialStore
 from .documents.conversion import convert_source_documents
+from .domain import ContentScript
 from .importer import ImportService
 from .outputs.generate import OutputManifest, generate_outputs
 from .report import ImportReport
@@ -89,6 +90,10 @@ class ImportWorkflow:
                     classified_count += 1
                     if result.relevance_status == "needs_review":
                         needs_review_count += 1
+
+            for script in repository.list_scripts():
+                if script.script_text and not script.summary:
+                    repository.upsert_script(replace(script, summary=provider.summarize_script(script.script_text)))
 
             document_result = convert_source_documents(
                 source_dir, target_dir, extensions, provider

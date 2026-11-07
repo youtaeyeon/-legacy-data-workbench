@@ -10,6 +10,7 @@ from ..repository import Repository
 from ..settings import DEFAULT_PRODUCTS
 from .dashboard import render_dashboard
 from .excel import export_marketing_excel
+from .scripts import generate_scripts
 from .markdown import render_hospital_markdown
 
 
@@ -32,6 +33,10 @@ def generate_outputs(
     wiki_dir.mkdir(parents=True, exist_ok=True)
     provider = provider or MockProvider()
     markdown_files: list[Path] = []
+    script_entries = generate_scripts(repository, target_dir)
+    scripts_by_hospital: dict[str, list[dict]] = {}
+    for entry in script_entries:
+        scripts_by_hospital.setdefault(entry["hospital_id"], []).append(entry)
     for hospital in repository.list_hospitals():
         path = wiki_dir / f"{hospital.hospital_id}.md"
         content = render_hospital_markdown(
@@ -41,6 +46,7 @@ def generate_outputs(
             repository.list_channels(hospital.hospital_id),
             repository.list_contents(hospital.hospital_id),
             provider,
+            scripts=scripts_by_hospital.get(hospital.hospital_id, []),
         )
         path.write_text(content, encoding="utf-8")
         markdown_files.append(path)

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<!--
+[AI 참고용 디자인 가이드] 이 파일의 디자인(노션 스타일)을 그대로 유지하면서 기능을 추가해 주세요.
+- 배경 #FFFFFF, 사이드바 #F7F7F5, 글자 #37352F, 보조 글자 #787774, 테두리 1px #E9E9E7, hover #F1F1EF
+- 그림자 없음, 그라데이션 없음, 카드는 테두리만(모서리 6px), 강조색 없음(태그에만 연한 파스텔 배경)
+- 폰트: Pretendard (대체: Noto Sans KR), 본문 15px, 제목 앞에 이모지
+- 레이아웃: 왼쪽 240px 사이드바 + 가운데 최대 폭 900px 콘텐츠, 상단 탭으로 시트/뷰 전환
+- 표: 가로선만 연하게, 세로선 없음 / 막대 차트: 회색 계열 + 진한 회색 1색
+- 다크 모드 지원: CSS 변수(:root)로 색상 관리, 새 색을 추가할 때도 변수로 정의할 것
+
+[탭 구성]
+1) 영업부: 병원 목록, 지역별 현황
+2) 마케팅부: 홈페이지·인스타·유튜브 등록 현황, 채널 링크 표
+3) 영상 피드: 병원이 올린 자사 장비 영상. 16:9 썸네일 카드 갤러리, 업로드일 최신순, 카드를 누르면 유튜브로 이동
+   (SHOW_THUMB=true 로 유튜브 썸네일 표시). 병원별 필터 버튼
+4) 콘텐츠 제작: 수집한 영상 스크립트를 장비별 탭으로 나눠 보는 화면.
+   장비 탭 = 전체 / 울트라클리어 / 울트라클리어 엘리트 / 리뉴비온 / 피아모노빌리티 (목록에 없으면 '기타' 탭, EQUIP 배열로 관리, 탭마다 영상 수 표시)
+   카드(2열): 제목, 병원, 업로드일, 활용 상태 태그(미활용=회색, 제작 중=파랑, 게시 완료=초록), '스크립트 보기' 표시
+   카드를 누르면 가운데 팝업(모달)이 열려 스크립트 전문, 요약·콘텐츠 소재가 보이고 '스크립트 복사', '유튜브에서 보기' 버튼 제공
+   (X 버튼, 바깥 영역 클릭, Esc 키로 닫힘). 상단 막대는 활용 상태별 현황이며 누르면 필터링
+
+[영상 데이터 칸] 업로드일, 병원명, 장비명(EQUIP 중 하나), 제목, 링크, 스크립트, 요약·콘텐츠 소재, 활용 상태(미활용/제작 중/게시 완료)
+[활용 흐름] 영상 링크 입력 → 자막 자동 수집 → 장비별 분류 → AI가 요약·콘텐츠 소재 제안 → 담당자 검수 → SNS용 초안 생성
+[주의] 병원 영상은 병원의 저작물이므로 SNS 활용 시 사전 허락과 출처 표기가 필요함. 스크립트는 소재 발굴·참고용으로 사용
+[데이터] 샘플입니다. 실제 데이터(영업부/마케팅부 시트, 영상 기록)로 교체해서 사용하세요.
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>병원 거래처 대시보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  --bg:#ffffff; --side:#f7f7f5; --text:#37352f; --sub:#787774;
+  --line:#e9e9e7; --hover:#f1f1ef; --bar:#37352f; --bar-soft:#d9d9d6;
+  --blue-bg:#e7f3f8; --blue-tx:#183347;
+  --green-bg:#edf3ec; --green-tx:#1c3829;
+  --gray-bg:#f1f1ef; --gray-tx:#787774;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#191919; --side:#202020; --text:#e6e6e4; --sub:#9b9a97;
+    --line:#2f2f2f; --hover:#2a2a2a; --bar:#e6e6e4; --bar-soft:#3a3a38;
+    --blue-bg:#1f3a4a; --blue-tx:#d3e5ef;
+    --green-bg:#243b2d; --green-tx:#dbeddb;
+    --gray-bg:#2a2a2a; --gray-tx:#9b9a97;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#191919; --side:#202020; --text:#e6e6e4; --sub:#9b9a97;
+  --line:#2f2f2f; --hover:#2a2a2a; --bar:#e6e6e4; --bar-soft:#3a3a38;
+  --blue-bg:#1f3a4a; --blue-tx:#d3e5ef;
+  --green-bg:#243b2d; --green-tx:#dbeddb;
+  --gray-bg:#2a2a2a; --gray-tx:#9b9a97;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{font-family:"Pretendard","Noto Sans KR",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;font-size:15px;line-height:1.6;display:flex;min-height:100vh}
+.side{width:240px;background:var(--side);border-right:1px solid var(--line);padding:16px 8px;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:auto}
+.side h4{margin:16px 10px 4px;font-size:12px;font-weight:500;color:var(--sub)}
+.ws{padding:6px 10px;font-weight:700;margin-bottom:8px}
+.side a{display:flex;gap:8px;align-items:center;padding:5px 10px;border-radius:4px;color:var(--text);text-decoration:none;font-size:14px;cursor:pointer}
+.side a:hover,.side a.on{background:var(--hover)}
+.side a.on{font-weight:500}
+main{flex:1;min-width:0;padding:48px 24px 80px}
+.wrap{max-width:900px;margin:0 auto}
+.emoji{font-size:48px;line-height:1}
+h1{font-size:36px;font-weight:700;margin:12px 0 4px;letter-spacing:-0.5px}
+.desc{color:var(--sub);margin:0 0 20px}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);margin-bottom:28px}
+.tabs.sub{margin-bottom:16px}
+.tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--sub);font:inherit;font-size:14px;padding:6px 12px;cursor:pointer;margin-bottom:-1px}
+.tab:hover{background:var(--hover);border-radius:4px 4px 0 0}
+.tab.on{color:var(--text);border-bottom-color:var(--text);font-weight:500}
+h2{font-size:20px;font-weight:700;margin:40px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.card{border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.card .l{font-size:13px;color:var(--sub)}
+.card .v{font-size:26px;font-weight:700;margin:2px 0;letter-spacing:-0.5px}
+.tag{display:inline-block;padding:0 6px;border-radius:4px;font-size:12px;line-height:20px;font-weight:500;background:var(--blue-bg);color:var(--blue-tx)}
+.tag.g{background:var(--green-bg);color:var(--green-tx)}
+.tag.n{background:var(--gray-bg);color:var(--gray-tx)}
+.rows{display:flex;flex-direction:column;gap:4px}
+.rw{display:grid;grid-template-columns:72px 1fr 40px;align-items:center;gap:12px;padding:6px 8px;border-radius:4px}
+.rw.click{cursor:pointer}
+.rw:hover,.rw.on{background:var(--hover)}
+.rw .nm{font-size:14px}
+.rw .tr{height:8px;background:var(--bar-soft);border-radius:2px;overflow:hidden}
+.rw .fl{height:100%;background:var(--bar);border-radius:2px}
+.rw .ct{text-align:right;color:var(--sub);font-size:13px}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.tools[hidden]{display:none}
+.chip{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:4px;padding:3px 10px;font:inherit;font-size:13px;cursor:pointer}
+.chip:hover{background:var(--hover)}
+.chip.on{background:var(--text);color:var(--bg);border-color:var(--text)}
+input[type=search]{flex:1;min-width:160px;border:1px solid var(--line);background:transparent;color:var(--text);border-radius:4px;padding:5px 10px;font:inherit;font-size:14px;outline:none}
+input[type=search]:focus{border-color:var(--sub)}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:560px}
+th{text-align:left;font-weight:500;font-size:13px;color:var(--sub);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px;border-bottom:1px solid var(--line)}
+tbody tr:hover{background:var(--hover)}
+td a{color:var(--text);text-decoration:underline;text-decoration-color:var(--bar-soft);text-underline-offset:3px}
+td a:hover{text-decoration-color:var(--text)}
+.dim{color:var(--sub)}
+.empty{padding:24px 10px;color:var(--sub);text-align:center}
+.gal{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
+.gal[hidden]{display:none}
+.vc{display:block;color:inherit;text-decoration:none;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.vc:hover{background:var(--hover)}
+.th,.vb{cursor:pointer}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;justify-content:center;align-items:flex-start;padding:calc(48px + env(safe-area-inset-top,0px)) 16px 48px;overflow:auto;z-index:50}
+.ov[hidden]{display:none}
+.md{position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;width:100%;max-width:640px;padding:28px 28px 32px}
+.x{position:absolute;top:12px;right:12px;border:0;background:transparent;color:var(--sub);font:inherit;font-size:16px;cursor:pointer;border-radius:4px;padding:2px 8px}
+.x:hover{background:var(--hover)}
+.md h3{margin:0 0 8px;font-size:22px;letter-spacing:-0.3px;padding-right:32px}
+.md h5{margin:20px 0 6px;font-size:12px;font-weight:500;color:var(--sub)}
+.md p{margin:0;white-space:pre-wrap;line-height:1.8}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:24px}
+a.chip{color:var(--text);display:inline-block}
+.pl{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;align-items:start}
+.pl[hidden]{display:none}
+.th{aspect-ratio:16/9;background:var(--side);display:flex;align-items:center;justify-content:center;font-size:28px;color:var(--sub);border-bottom:1px solid var(--line);overflow:hidden}
+.th img{width:100%;height:100%;object-fit:cover;display:block}
+.vb{padding:10px 12px}
+.vt{font-weight:500;font-size:14px;line-height:1.4;margin-bottom:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.vm{font-size:12px;color:var(--sub);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+@media (max-width:1000px){.gal{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:760px){
+  .gal{grid-template-columns:1fr}
+  .pl{grid-template-columns:1fr}
+  .side{display:none}
+  main{padding:32px 16px 64px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  h1{font-size:28px}
+}
+</style>
+</head>
+<body>
+<nav class="side">
+  <div class="ws">📁 병원 거래처</div>
+  <a data-t="sales">💼 영업부</a>
+  <a data-t="mkt">📣 마케팅부</a>
+  <a data-t="vid">🎬 영상 피드</a>
+  <a data-t="pro">✍️ 콘텐츠 제작</a>
+</nav>
+<main>
+<div class="wrap">
+  <div class="emoji">🏥</div>
+  <h1>병원 거래처 대시보드</h1>
+  <p class="desc">영업부와 마케팅부 시트를 한곳에서 확인해요.</p>
+  <div class="tabs">
+    <button class="tab" data-t="sales">💼 영업부</button>
+    <button class="tab" data-t="mkt">📣 마케팅부</button>
+    <button class="tab" data-t="vid">🎬 영상 피드</button>
+    <button class="tab" data-t="pro">✍️ 콘텐츠 제작</button>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+  <h2 id="h-a"></h2>
+  <div class="rows" id="agg"></div>
+  <h2 id="h-l">🏥 병원 목록</h2>
+  <div class="tools"><input type="search" id="q" placeholder="병원명, 지역, 대표명 검색"></div>
+  <div class="tools" id="chips"></div>
+  <div class="tools" id="schips" hidden></div>
+  <div class="gal" id="gal" hidden></div>
+  <div class="tbl" id="tw">
+    <table><thead id="th"></thead><tbody id="tb"></tbody></table>
+    <div class="empty" id="empty" hidden>검색 결과가 없어요.</div>
+  </div>
+</div>
+</main>
+<div class="ov" id="ov" hidden>
+  <div class="md" role="dialog" aria-modal="true">
+    <button class="x" id="mx" aria-label="닫기">✕</button>
+    <div id="mb"></div>
+  </div>
+</div>
+<script>
+(function(){
+  var S="https://www.shinsang.com",E="https://www.egg.com",B="https://www.theboom.com";
+  // [병원명, 지역, 대표명, 연락처, 홈페이지, 인스타, 유튜브, 비고]
+  var rows=[
+    ["신상성형외과","서울/강남","이강남","010-3456-7890",S,S,S,""],
+    ["에그성형외과","서울/목동","김목동","010-3456-7890",E,E,E,""],
+    ["더붐의원","부산","최부산","010-3456-7891",B,B,B,""],
+    ["연세의원","서울/종로","이종로","010-3456-7890","","","",""],
+    ["서울피부의원","서울/종로","김서울","010-3456-7890","","","",""],
+    ["김해피부과","경상/김해","최김해","010-3456-7891","","","",""],
+    ["구미성형외과","경상/구미","김구미","010-3456-7890","","","",""],
+    ["목동성형외과","서울/목동","김성형","010-3456-7890","","","",""],
+    ["기린성형외과","부산","최기린","010-3456-7891","","","",""],
+    ["365mc","서울/마포","이마포","010-3456-7890","","","",""]
+  ];
+  var tab="sales",cur="전체";
+  var $=function(id){return document.getElementById(id)};
+  var grp=function(r){return r[1].split("/")[0]};
+  var has=function(v){return v!==""};
+
+  function card(l,v,t,cls){return '<div class="card"><div class="l">'+l+'</div><div class="v">'+v+'</div><span class="tag '+(cls||"")+'">'+t+'</span></div>'}
+
+  function bar(label,n,max,click,on){
+    var r=document.createElement("div");r.className="rw"+(click?" click":"")+(on?" on":"");
+    r.innerHTML='<div class="nm"></div><div class="tr"><div class="fl"></div></div><div class="ct"></div>';
+    r.querySelector(".nm").textContent=label;
+    r.querySelector(".fl").style.width=(max?n/max*100:0)+"%";
+    r.querySelector(".ct").textContent=n+"곳";
+    return r;
+  }
+
+  function td(tr,v,link){
+    var c=document.createElement("td");
+    if(link){
+      if(v&&/^https?:\/\//.test(v)){
+        var a=document.createElement("a");a.href=v;a.target="_blank";a.rel="noopener noreferrer";a.textContent="링크";c.appendChild(a);
+      }else{c.className="dim";c.textContent="–"}
+    }else{c.textContent=v}
+    tr.appendChild(c);
+  }
+
+  // 썸네일 표시: 직접 쓰는 프로그램에서는 true로 바꾸면 유튜브 썸네일이 표시돼요.
+  var SHOW_THUMB=false;
+  // [업로드일, 병원명, 장비명, 영상 제목, 유튜브 링크, 스크립트, 요약·콘텐츠 소재, 활용 상태(미활용/제작 중/게시 완료)]
+  var st="전체";
+  var EQUIP=["울트라클리어","울트라클리어 엘리트","리뉴비온","피아모노빌리티"];
+  var vids=[
+    ["2026-11-05","에그성형외과","울트라클리어","울트라클리어 도입 후기 영상","https://www.youtube.com/watch?v=sample000001","(샘플) 안녕하세요, 오늘은 저희 병원에서 새로 도입한 울트라클리어에 대해 이야기해 보겠습니다. 도입을 결정한 계기는 환자분들께 더 나은 선택지를 드리고 싶어서였습니다.\n\n먼저 장비의 구성과 사용 방법을 간단히 소개해 드리고, 실제로 사용해 보면서 느낀 점을 말씀드리겠습니다.\n\n마지막으로 상담 시 자주 받는 질문 몇 가지를 정리해 보겠습니다. 끝까지 시청해 주셔서 감사합니다.","핵심: 도입 계기, 사용 후 느낀 점\n소재: 숏츠 1건, 카드뉴스 1건","미활용"],
+    ["2026-11-02","신상성형외과","울트라클리어 엘리트","울트라클리어 엘리트 시술 과정 공개","https://www.youtube.com/watch?v=sample000002","(샘플) 오늘은 울트라클리어 엘리트를 사용하는 과정을 순서대로 보여드리겠습니다.\n\n먼저 사전 준비 단계입니다. 상담에서 확인한 내용을 바탕으로 진행 계획을 세웁니다.\n\n다음으로 장비를 사용하는 단계를 설명드리고, 마지막으로 관리 방법과 주의사항을 안내해 드리겠습니다.","핵심: 시술 과정 설명\n소재: 블로그 1건","제작 중"],
+    ["2026-10-28","더붐의원","리뉴비온","리뉴비온 시술 현장 영상","https://www.youtube.com/watch?v=sample000003","","","미활용"],
+    ["2026-10-21","신상성형외과","피아모노빌리티","피아모노빌리티 원장님 인터뷰","https://www.youtube.com/watch?v=sample000004","(샘플) 원장님께 피아모노빌리티를 선택한 이유를 여쭤봤습니다.\n\n원장님: (샘플) 환자분들의 만족도와 운영 효율 두 가지를 모두 고려해서 선택했습니다.\n\n기존에 사용하던 장비와 비교했을 때 달라진 점과 앞으로의 계획에 대해서도 이야기를 나눴습니다.","핵심: 선택 이유, 환자 반응\n소재: 인터뷰 숏츠 2건","게시 완료"],
+    ["2026-10-14","연세의원","울트라클리어","울트라클리어 소개 숏츠","https://www.youtube.com/shorts/sample000005","(샘플) 울트라클리어를 1분으로 소개합니다.\n\n핵심 특징 세 가지만 짧게 말씀드릴게요. 첫째, 사용 방법이 간단합니다. 둘째, 상담 시 설명하기 쉽습니다. 셋째, 관리가 편합니다.","핵심: 장비 특징 요약\n소재: 인스타 릴스 1건","게시 완료"],
+    ["2026-10-09","에그성형외과","리뉴비온","리뉴비온 상담 Q&A","https://www.youtube.com/watch?v=sample000006","","","미활용"]
+  ];
+  function ytId(u){var m=/(?:v=|youtu\.be\/|shorts\/)([\w-]{6,})/.exec(u||"");return m?m[1]:""}
+
+  function openM(v){
+    var mb=$("mb");mb.innerHTML="";
+    var h=document.createElement("h3");h.textContent=v[3];mb.appendChild(h);
+    var m=document.createElement("div");m.className="vm";
+    [["tag",v[1]],["",v[2]],["",v[0].replace(/-/g,".")],[({"미활용":"tag n","제작 중":"tag","게시 완료":"tag g"})[v[7]]||"tag n",v[7]||"미활용"]].forEach(function(p){
+      var sp=document.createElement("span");if(p[0])sp.className=p[0];sp.textContent=p[1];m.appendChild(sp);
+    });
+    mb.appendChild(m);
+    var sec=function(t,txt){var e=document.createElement("h5");e.textContent=t;var p=document.createElement("p");p.textContent=txt;mb.appendChild(e);mb.appendChild(p)};
+    sec("스크립트",v[5]||"스크립트 수집 전이에요.");
+    sec("요약 · 콘텐츠 소재",v[6]||"아직 정리 전이에요.");
+    var ac=document.createElement("div");ac.className="acts";
+    if(v[5]){
+      var cp=document.createElement("button");cp.className="chip";cp.textContent="스크립트 복사";
+      cp.onclick=function(){try{navigator.clipboard.writeText(v[5]).then(function(){cp.textContent="복사했어요"},function(){cp.textContent="복사 실패"})}catch(e){cp.textContent="복사 실패"}};
+      ac.appendChild(cp);
+    }
+    if(/^https?:\/\//.test(v[4])){
+      var l=document.createElement("a");l.className="chip";l.href=v[4];l.target="_blank";l.rel="noopener noreferrer";l.style.textDecoration="none";l.textContent="유튜브에서 보기 ↗";
+      ac.appendChild(l);
+    }
+    mb.appendChild(ac);
+    $("ov").hidden=false;
+  }
+
+  function renderVid(){
+    var pro=tab==="pro";
+    var hs={};vids.forEach(function(v){hs[v[1]]=(hs[v[1]]||0)+1});
+    var names=Object.keys(hs).sort(function(a,b){return hs[b]-hs[a]});
+    if(!pro&&cur!=="전체"&&!hs[cur])cur="전체";
+    var sorted=vids.slice().sort(function(a,b){return a[0]<b[0]?1:(a[0]>b[0]?-1:0)});
+    var cs=vids.filter(function(v){return v[5]}).length,dn=vids.filter(function(v){return v[7]==="게시 완료"}).length,nu=vids.filter(function(v){return v[7]==="미활용"}).length;
+    var pr=vids.filter(function(v){return v[7]==="제작 중"}).length;
+    $("kpis").innerHTML=pro?card("스크립트 수집",cs+"/"+vids.length,"개","g")+card("미활용",nu,"개","n")+card("제작 중",pr,"개")+card("게시 완료",dn,"개","g"):card("전체 영상",vids.length,"개")+card("영상 올린 병원",names.length+"/"+rows.length,"곳","g")+card("가장 많이 올린 병원",names[0],hs[names[0]]+"개")+card("최근 업로드",sorted[0][0].slice(5).replace("-","."),sorted[0][1]);
+    $("h-a").textContent=pro?"📋 활용 상태별 현황 (샘플 데이터)":"🎬 병원별 업로드 (샘플 데이터)";
+    var agg=$("agg");agg.innerHTML="";
+    if(pro){["미활용","제작 중","게시 완료"].forEach(function(s2){
+      var c2=vids.filter(function(v){return v[7]===s2}).length;
+      var r=bar(s2,c2,vids.length,true,st===s2);
+      r.style.gridTemplateColumns="112px 1fr 40px";
+      r.querySelector(".ct").textContent=c2+"개";
+      r.onclick=function(){st=(st===s2?"전체":s2);render()};
+      agg.appendChild(r);
+    })}
+    else names.forEach(function(n){
+      var r=bar(n,hs[n],hs[names[0]],true,cur===n);
+      r.style.gridTemplateColumns="112px 1fr 40px";
+      r.querySelector(".ct").textContent=hs[n]+"개";
+      r.onclick=function(){cur=(cur===n?"전체":n);render()};
+      agg.appendChild(r);
+    });
+    $("th").innerHTML="";$("tb").innerHTML="";
+    var ch=$("chips");ch.innerHTML="";
+    ch.className=pro?"tabs sub":"tools";
+    var tl=["전체"].concat(pro?EQUIP:names);
+    if(pro&&vids.some(function(v){return EQUIP.indexOf(v[2])<0}))tl.push("기타");
+    tl.forEach(function(g){
+      var b=document.createElement("button");b.className=(pro?"tab":"chip")+(cur===g?" on":"");
+      b.textContent=pro?g+" "+vids.filter(function(v){return g==="전체"||(g==="기타"?EQUIP.indexOf(v[2])<0:v[2]===g)}).length:g;
+      b.onclick=function(){cur=g;render()};ch.appendChild(b);
+    });
+    var s=$("q").value.trim().toLowerCase(),gal=$("gal"),n=0;gal.innerHTML="";
+    if(pro){
+      gal.className="pl";
+    }else{gal.className="gal"}
+    sorted.forEach(function(v){
+      if(cur!=="전체"&&(pro?(cur==="기타"?EQUIP.indexOf(v[2])>=0:v[2]!==cur):v[1]!==cur))return;
+      if(st!=="전체"&&v[7]!==st)return;
+      if(s&&[v[1],v[2],v[3],v[5],v[6]].join(" ").toLowerCase().indexOf(s)<0)return;
+      var a=document.createElement(pro?"div":"a");a.className="vc";
+      if(!pro&&/^https?:\/\//.test(v[4])){a.href=v[4];a.target="_blank";a.rel="noopener noreferrer"}
+      var th=document.createElement("div");th.className="th";
+      var id=ytId(v[4]);
+      if(SHOW_THUMB&&id){var im=document.createElement("img");im.loading="lazy";im.alt="";im.src="https://img.youtube.com/vi/"+id+"/hqdefault.jpg";th.appendChild(im)}else{th.textContent="▶"}
+      var b=document.createElement("div");b.className="vb";
+      var t=document.createElement("div");t.className="vt";t.textContent=v[3];
+      var m=document.createElement("div");m.className="vm";
+      [["tag",v[1]],["",v[2]],["",v[0].replace(/-/g,".")]].concat(pro?[[({"미활용":"tag n","제작 중":"tag","게시 완료":"tag g"})[v[7]]||"tag n",v[7]||"미활용"],["",v[5]?"스크립트 보기 ›":"스크립트 수집 전"]]:[]).forEach(function(p){
+        var sp=document.createElement("span");if(p[0])sp.className=p[0];sp.textContent=p[1];m.appendChild(sp);
+      });
+      b.appendChild(t);b.appendChild(m);
+      if(pro){
+        b.onclick=function(){openM(v)};
+        a.appendChild(b);
+        gal.appendChild(a);
+      }else{a.appendChild(th);a.appendChild(b);gal.appendChild(a)}
+      n++;
+    });
+    if(!n){var e=document.createElement("div");e.className="empty";e.style.gridColumn="1/-1";e.textContent="검색 결과가 없어요.";gal.appendChild(e)}
+  }
+
+  function render(){
+    document.querySelectorAll("[data-t]").forEach(function(e){e.classList.toggle("on",e.dataset.t===tab)});
+    var isV=tab==="vid"||tab==="pro";
+    $("gal").hidden=!isV;$("tw").hidden=isV;$("schips").hidden=true;
+    $("h-l").textContent=tab==="pro"?"✍️ 장비별 스크립트":(isV?"🎬 영상 목록 (최신순)":"🏥 병원 목록");
+    $("q").placeholder=tab==="pro"?"병원명, 장비명, 제목, 스크립트 검색":(isV?"병원명, 장비명, 영상 제목 검색":"병원명, 지역, 대표명 검색");
+    if(isV){renderVid();return}
+    var counts={};rows.forEach(function(r){var g=grp(r);counts[g]=(counts[g]||0)+1});
+    var groups=Object.keys(counts).sort(function(a,b){return counts[b]-counts[a]});
+    if(cur!=="전체"&&!counts[cur])cur="전체";
+
+    var k=$("kpis"),agg=$("agg");agg.innerHTML="";
+    if(tab==="sales"){
+      k.innerHTML=card("전체 병원",rows.length,"곳")+card("지역 그룹",groups.length,"개 권역")+card("가장 많은 지역",groups[0],counts[groups[0]]+"곳")+card("서울 비중",Math.round(counts["서울"]/rows.length*100)+"%",counts["서울"]+"곳");
+      $("h-a").textContent="📍 지역별 현황";
+      groups.forEach(function(g){
+        var r=bar(g,counts[g],counts[groups[0]],true,cur===g);
+        r.onclick=function(){cur=(cur===g?"전체":g);render()};agg.appendChild(r);
+      });
+      $("th").innerHTML="<tr><th>병원명</th><th>지역</th><th>대표명</th><th>연락처</th></tr>";
+    }else{
+      var h=rows.filter(function(r){return has(r[4])}).length,
+          i=rows.filter(function(r){return has(r[5])}).length,
+          y=rows.filter(function(r){return has(r[6])}).length,
+          all=rows.filter(function(r){return has(r[4])&&has(r[5])&&has(r[6])}).length;
+      k.innerHTML=card("홈페이지 등록",h+"/"+rows.length,Math.round(h/rows.length*100)+"%","g")+card("인스타 등록",i+"/"+rows.length,Math.round(i/rows.length*100)+"%","g")+card("유튜브 등록",y+"/"+rows.length,Math.round(y/rows.length*100)+"%","g")+card("채널 모두 보유",all,"곳");
+      $("h-a").textContent="📣 채널 등록 현황";
+      [["홈페이지",h],["인스타",i],["유튜브",y],["미등록",rows.length-rows.filter(function(r){return has(r[4])||has(r[5])||has(r[6])}).length]].forEach(function(p){agg.appendChild(bar(p[0],p[1],rows.length,false,false))});
+      $("th").innerHTML="<tr><th>병원명</th><th>지역</th><th>대표명</th><th>연락처</th><th>홈페이지</th><th>인스타</th><th>유튜브</th><th>비고</th></tr>";
+    }
+
+    var ch=$("chips");ch.innerHTML="";
+    ch.className="tools";
+    ["전체"].concat(groups).forEach(function(g){
+      var b=document.createElement("button");b.className="chip"+(cur===g?" on":"");b.textContent=g;
+      b.onclick=function(){cur=g;render()};ch.appendChild(b);
+    });
+
+    var s=$("q").value.trim().toLowerCase(),tb=$("tb"),n=0;tb.innerHTML="";
+    rows.forEach(function(r){
+      if(cur!=="전체"&&grp(r)!==cur)return;
+      if(s&&r.slice(0,4).join(" ").toLowerCase().indexOf(s)<0)return;
+      var tr=document.createElement("tr");
+      for(var j=0;j<4;j++)td(tr,r[j],false);
+      if(tab==="mkt"){td(tr,r[4],true);td(tr,r[5],true);td(tr,r[6],true);
+        var c=document.createElement("td");c.className="dim";c.textContent=r[7]||"–";tr.appendChild(c);}
+      tb.appendChild(tr);n++;
+    });
+    $("empty").hidden=n>0;
+  }
+
+  document.querySelectorAll("[data-t]").forEach(function(e){
+    e.addEventListener("click",function(){tab=e.dataset.t;cur="전체";st="전체";render()});
+  });
+  $("q").addEventListener("input",render);
+  $("mx").onclick=function(){$("ov").hidden=true};
+  $("ov").addEventListener("click",function(e){if(e.target===this)this.hidden=true});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")$("ov").hidden=true});
+  render();
+})();
+</script>
+</body>
+</html>

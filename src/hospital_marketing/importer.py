@@ -13,11 +13,12 @@ from openpyxl import Workbook, load_workbook
 
 from .diff import compare_hospital
 from .documents.readers import selected_source_files
-from .domain import Channel, ContentItem, EquipmentDelivery, Hospital, MarketingMaterial
+from .domain import Channel, ContentItem, ContentScript, EquipmentDelivery, Hospital, MarketingMaterial
 from .report import ImportIssue, ImportReport
 from .repository import Repository
 
-DETAIL_SHEETS = {"Deliveries", "Materials", "Channels", "ContentCandidates"}
+DETAIL_SHEETS = ("Deliveries", "Materials", "Channels", "ContentCandidates", "Scripts")
+USAGE_STATUSES = {"미활용", "제작 중", "게시 완료"}
 
 
 def _parse_date(value: Any) -> date | None:
@@ -69,6 +70,7 @@ _CSV_SHEETS = (
     ("Deliveries", {"hospital_id", "product_name", "quantity"}),
     ("Channels", {"hospital_id", "platform", "channel_name", "url"}),
     ("ContentCandidates", {"hospital_id", "platform", "title", "url"}),
+    ("Scripts", {"content_url"}),
 )
 
 
@@ -263,12 +265,15 @@ class ImportService:
             "Materials": {"hospital_id", "product_name", "material_name", "quantity", "status"},
             "Channels": {"hospital_id", "platform", "channel_name", "url"},
             "ContentCandidates": {"hospital_id", "platform", "title", "url"},
+            "Scripts": {"content_url"},
         }
         for path in files:
             file_name = path.relative_to(source_dir).as_posix()
             workbook = _load_source_workbook(path)
             try:
-                for sheet_name in DETAIL_SHEETS.intersection(workbook.sheetnames):
+                for sheet_name in DETAIL_SHEETS:
+                    if sheet_name not in workbook.sheetnames:
+                        continue
                     worksheet = workbook[sheet_name]
                     iterator = worksheet.iter_rows(values_only=True)
                     header_values = next(iterator, None)
@@ -282,6 +287,29 @@ class ImportService:
                         continue
                     for row_number, row in enumerate(iterator, start=2):
                         if not any(value is not None and value != "" for value in row):
+                            continue
+                        if sheet_name == "Scripts":
+                            raw_status = _cell(row, headers, "usage_status")
+                            status = str(raw_status).strip() if raw_status not in (None, "") else "미활용"
+                            if status not in USAGE_STATUSES:
+                                report.issues.append(ImportIssue(file_name, sheet_name, row_number, "usage_status", "invalid_usage_status", "활용 상태는 미활용, 제작 중, 게시 완료 중 하나여야 합니다."))
+                                continue
+                            content_url_raw = _cell(row, headers, "content_url")
+                            content_url = str(content_url_raw).strip() if content_url_raw is not None else ""
+                            linked = self.repository.connection.execute("SELECT 1 FROM contents WHERE url=?", (content_url,)).fetchone() if content_url else None
+                            if not linked:
+                                report.issues.append(ImportIssue(file_name, sheet_name, row_number, "content_url", "unknown_content_url", "연결된 콘텐츠 URL을 찾을 수 없어 행을 건너뛰었습니다."))
+                                continue
+                            try:
+                                changed = self.repository.upsert_script(ContentScript(
+                                    content_url, str(_cell(row, headers, "script_text") or "").strip(),
+                                    str(_cell(row, headers, "summary") or "").strip(), status,
+                                    _parse_date(_cell(row, headers, "collected_at")),
+                                ))
+                                if changed:
+                                    report.updated_count += 1
+                            except (TypeError, ValueError) as exc:
+                                report.issues.append(ImportIssue(file_name, sheet_name, row_number, None, "invalid_value", str(exc)))
                             continue
                         hospital_id_raw = _cell(row, headers, "hospital_id")
                         hospital_id = str(hospital_id_raw).strip() if hospital_id_raw is not None else ""
