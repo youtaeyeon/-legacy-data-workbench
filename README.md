@@ -42,6 +42,12 @@ Remove-Item Env:QT_QPA_PLATFORM
 .\.venv\Scripts\python.exe -m hospital_marketing.app
 ```
 
+실제 Gemini 연결은 별도 live 테스트로 확인합니다. 저장소 루트에 `.env.example`을 복사해 `.env`로 만들고 `GEMINI_API_KEY=`에 테스트 키를 입력하거나 `GEMINI_API_KEY` 환경 변수를 설정한 뒤 실행하세요. `.env`는 테스트 전용이며 앱 설정에는 사용하지 않습니다. 기본 테스트에서는 live 테스트를 제외합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -m live -q
+```
+
 목업 입력은 다음 위치에 생성됩니다.
 
 ```text
