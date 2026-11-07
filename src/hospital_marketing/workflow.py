@@ -70,6 +70,8 @@ class ImportWorkflow:
             report.issues.extend(large_source_file_issue(item) for item in large_source_files)
             if mock_mode or provider_id == "mock":
                 provider = self.provider_registry.create("mock")
+            elif provider_id == "local-cli":
+                provider = self.provider_registry.create(provider_id, cli=model_id)
             else:
                 api_key = self.credential_store.get(provider_id)
                 provider = self.provider_registry.create(provider_id, api_key=api_key or "", model=model_id)

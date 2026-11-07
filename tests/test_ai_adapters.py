@@ -517,7 +517,7 @@ def test_provider_error_detail_redacts_masked_key_tokens(prefix, star_count, spl
 
 def test_registry_exposes_all_selected_providers_and_accepts_injected_client():
     registry = ProviderRegistry()
-    assert set(registry.available()) == {"mock", "openai", "anthropic", "gemini"}
+    assert set(registry.available()) == {"mock", "openai", "anthropic", "gemini", "local-cli"}
     provider = registry.create("openai", api_key="secret", model="model", http_client=FakeClient(_fake_payload("openai", ANSWER)))
     assert isinstance(provider, OpenAIProvider)
 

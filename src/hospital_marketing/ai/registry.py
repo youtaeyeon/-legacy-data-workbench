@@ -3,6 +3,7 @@ from typing import Any
 
 from .adapters.anthropic_provider import AnthropicProvider
 from .adapters.gemini_provider import GeminiProvider
+from .adapters.local_cli_provider import LocalCLIProvider
 from .adapters.openai_provider import OpenAIProvider
 from .base import AIProvider
 from .mock import MockProvider
@@ -15,6 +16,7 @@ class ProviderRegistry:
             "openai": OpenAIProvider,
             "anthropic": AnthropicProvider,
             "gemini": GeminiProvider,
+            "local-cli": LocalCLIProvider,
         }
 
     def available(self) -> Sequence[str]:
