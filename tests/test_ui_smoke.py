@@ -16,6 +16,7 @@ from hospital_marketing.providers import ProviderRequestError
 from hospital_marketing.report import ImportReport
 from hospital_marketing.settings import AppSettings, SettingsStore
 from hospital_marketing.ui.main_window import MainWindow
+from hospital_marketing.ui.product_keywords_dialog import ProductKeywordsDialog
 from hospital_marketing.ui.settings_dialog import SettingsDialog
 from hospital_marketing.workflow import ImportWorkflow, WorkflowResult
 
@@ -297,6 +298,110 @@ def test_settings_dialog_preserves_enabled_extensions_when_saving(tmp_path):
     dialog.save_button.click()
 
     assert settings_store.load().enabled_extensions == (".xlsx",)
+
+
+def test_settings_dialog_preserves_product_keywords_when_saving(tmp_path):
+    from hospital_marketing.settings import ProductKeyword
+
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    keywords = (ProductKeyword("제품 A", False), ProductKeyword("제품 B", True))
+    settings_store.save(AppSettings(product_keywords=keywords))
+    dialog = SettingsDialog(settings_store, CredentialStore(), ProviderRegistry())
+
+    dialog.save_button.click()
+
+    assert settings_store.load().product_keywords == keywords
+
+
+def test_product_keywords_dialog_adds_trimmed_keyword_and_rejects_duplicates(tmp_path, monkeypatch):
+    from hospital_marketing.settings import ProductKeyword
+
+    _app()
+    dialog = ProductKeywordsDialog((ProductKeyword("피아모 노빌리티"),))
+    answers = iter((("  새 제품  ", True), (" 피아모   노빌리티 ", True)))
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getText", lambda *_args, **_kwargs: next(answers))
+    warnings = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda _parent, title, text: warnings.append((title, text)))
+
+    dialog.add_button.click()
+    dialog.add_button.click()
+
+    assert dialog.keywords() == (ProductKeyword("피아모 노빌리티"), ProductKeyword("새 제품"))
+    assert len(warnings) == 1
+    assert "이미" in warnings[0][1]
+
+
+def test_product_keywords_dialog_edits_removes_restores_defaults_and_cancel_does_not_save(tmp_path, monkeypatch):
+    from hospital_marketing.settings import DEFAULT_PRODUCTS, ProductKeyword
+
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    original = (ProductKeyword("사용자 제품", False),)
+    settings_store.save(AppSettings(product_keywords=original))
+    dialog = ProductKeywordsDialog(original)
+    dialog.keyword_list.setCurrentRow(0)
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getText", lambda *_args, **_kwargs: ("수정 제품", True))
+
+    dialog.edit_button.click()
+    assert dialog.keywords() == (ProductKeyword("수정 제품", False),)
+    dialog.remove_button.click()
+    assert dialog.keywords() == ()
+    dialog.restore_button.click()
+    assert dialog.keywords() == tuple(ProductKeyword(term) for term in DEFAULT_PRODUCTS)
+    dialog.reject()
+
+    assert settings_store.load().product_keywords == original
+
+
+def test_main_window_does_not_run_when_no_product_keyword_is_enabled(tmp_path, monkeypatch):
+    from hospital_marketing.settings import ProductKeyword
+
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(product_keywords=(ProductKeyword("제품 A", False),)))
+    workflow = FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html")
+    window = MainWindow(settings_store, workflow)
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(tmp_path / "target"))
+
+    window.run_button.click()
+
+    assert workflow.calls == []
+    assert "검색 단어" in window.status_label.text()
+
+
+def test_main_window_keyword_dialog_saves_changes_and_import_preserves_them(tmp_path, monkeypatch):
+    from hospital_marketing.settings import ProductKeyword
+    import hospital_marketing.ui.main_window as main_window_module
+
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(product_keywords=(ProductKeyword("제품 A", True),)))
+    updated_keywords = (ProductKeyword("제품 A", False), ProductKeyword("제품 B", True))
+
+    class AcceptedDialog:
+        def __init__(self, *_args):
+            pass
+
+        def exec(self):
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        def keywords(self):
+            return updated_keywords
+
+    monkeypatch.setattr(main_window_module, "ProductKeywordsDialog", AcceptedDialog)
+    target = tmp_path / "target"
+    workflow = FakeWorkflow(target / "dashboard" / "index.html")
+    window = MainWindow(settings_store, workflow)
+    window.product_keywords_button.click()
+
+    assert settings_store.load().product_keywords == updated_keywords
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(target))
+    window.run_button.click()
+
+    assert settings_store.load().product_keywords == updated_keywords
 
 
 def test_main_window_groups_paths_and_highlights_primary_action(tmp_path):

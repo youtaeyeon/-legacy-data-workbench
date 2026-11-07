@@ -8,6 +8,15 @@ from pathlib import Path
 from .documents import SUPPORTED_EXTENSIONS
 
 
+DEFAULT_PRODUCTS = ("울트라클리어", "리뉴비온", "피아모")
+
+
+@dataclass(frozen=True)
+class ProductKeyword:
+    term: str
+    enabled: bool = True
+
+
 @dataclass(frozen=True)
 class AppSettings:
     source_dir: Path | None = None
@@ -16,6 +25,7 @@ class AppSettings:
     model_id: str = ""
     mock_mode: bool = True
     enabled_extensions: tuple[str, ...] = SUPPORTED_EXTENSIONS
+    product_keywords: tuple[ProductKeyword, ...] = tuple(ProductKeyword(term) for term in DEFAULT_PRODUCTS)
 
 
 def default_settings_path() -> Path:
@@ -47,6 +57,26 @@ class SettingsStore:
                     extension = f".{extension}"
                 if extension in SUPPORTED_EXTENSIONS and extension not in extensions:
                     extensions.append(extension)
+            raw_keywords = data.get("product_keywords")
+            if raw_keywords is None:
+                product_keywords = AppSettings().product_keywords
+            elif isinstance(raw_keywords, (list, tuple)):
+                product_keywords_list: list[ProductKeyword] = []
+                seen_keywords: set[str] = set()
+                for item in raw_keywords:
+                    if not isinstance(item, dict) or not isinstance(item.get("term"), str):
+                        continue
+                    term = item["term"].strip()
+                    if not term or not isinstance(item.get("enabled", True), bool):
+                        continue
+                    key = " ".join(term.split()).casefold()
+                    if key in seen_keywords:
+                        continue
+                    seen_keywords.add(key)
+                    product_keywords_list.append(ProductKeyword(term, item.get("enabled", True)))
+                product_keywords = tuple(product_keywords_list)
+            else:
+                product_keywords = AppSettings().product_keywords
             return AppSettings(
                 source_dir=Path(data["source_dir"]) if data.get("source_dir") else None,
                 target_dir=Path(data["target_dir"]) if data.get("target_dir") else None,
@@ -54,6 +84,7 @@ class SettingsStore:
                 model_id=str(data.get("model_id") or ""),
                 mock_mode=bool(data.get("mock_mode", True)),
                 enabled_extensions=tuple(extensions),
+                product_keywords=product_keywords,
             )
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
             return AppSettings()

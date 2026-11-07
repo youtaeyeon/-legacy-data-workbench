@@ -2,16 +2,14 @@ from collections.abc import Sequence
 
 from ..domain import ContentItem, Hospital
 from .base import RelevanceResult
-
-
-DEFAULT_PRODUCTS = ("울트라클리어", "리뉴비온", "피아모")
+from ..settings import DEFAULT_PRODUCTS
 
 
 class MockProvider:
     """Deterministic offline provider for fictional assignment data."""
 
     def classify_content(self, item: ContentItem, products: Sequence[str] = DEFAULT_PRODUCTS) -> RelevanceResult:
-        for product in products:
+        for product in sorted(products, key=len, reverse=True):
             if product and product in item.title:
                 return RelevanceResult("relevant", product, f"제목에서 제품명 '{product}' 확인")
             if product and product in item.description:

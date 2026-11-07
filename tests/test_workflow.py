@@ -64,3 +64,48 @@ def test_corrupt_selected_workbook_is_counted_as_one_failed_file(tmp_path):
     assert result.report.files_failed == 1
     assert len(result.report.issues) == 1
     assert result.report.issues[0].code == "invalid_workbook"
+
+
+def test_workflow_uses_enabled_product_keywords_for_classification(tmp_path):
+    from hospital_marketing.domain import ContentItem, Hospital
+    from hospital_marketing.settings import ProductKeyword
+
+    class CapturingProvider:
+        def __init__(self):
+            self.products = None
+
+        def classify_content(self, item, products):
+            self.products = tuple(products)
+            from hospital_marketing.ai.base import RelevanceResult
+            return RelevanceResult("relevant", "울트라클리어 엘리트", "목업 근거")
+
+        def summarize_hospital(self, hospital):
+            return "요약"
+
+        def convert_document_to_markdown(self, source_name, extracted_text):
+            return extracted_text
+
+    provider = CapturingProvider()
+    class Registry:
+        def create(self, *_args, **_kwargs):
+            return provider
+
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(product_keywords=(
+        ProductKeyword("울트라클리어", True),
+        ProductKeyword("울트라클리어 엘리트", True),
+        ProductKeyword("리뉴비온", False),
+    )))
+    source = tmp_path / "source"
+    source.mkdir()
+    target = tmp_path / "target"
+    from hospital_marketing.repository import Repository
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_hospital(Hospital("MOCK-001", "목업 병원"))
+    repository.add_content(ContentItem("MOCK-001", "YouTube", "울트라클리어 엘리트 시술 후기", "https://example.test", "", None, None, "pending", None))
+    repository.close()
+
+    ImportWorkflow(settings_store=settings, provider_registry=Registry()).run(source, target)
+
+    assert provider.products == ("울트라클리어 엘리트", "울트라클리어")

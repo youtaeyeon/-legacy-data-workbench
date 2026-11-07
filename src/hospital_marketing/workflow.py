@@ -50,7 +50,8 @@ class ImportWorkflow:
     ) -> WorkflowResult:
         source_dir = Path(source_dir)
         target_dir = Path(target_dir)
-        extensions = tuple(enabled_extensions) if enabled_extensions is not None else self.settings_store.load().enabled_extensions
+        settings = self.settings_store.load()
+        extensions = tuple(enabled_extensions) if enabled_extensions is not None else settings.enabled_extensions
         repository = self.repository_factory(target_dir / "data" / "app.db")
         repository.initialize()
         try:
@@ -67,7 +68,11 @@ class ImportWorkflow:
 
             classified_count = 0
             needs_review_count = 0
-            products = ("울트라클리어", "리뉴비온", "피아모")
+            products = tuple(sorted(
+                (keyword.term for keyword in settings.product_keywords if keyword.enabled),
+                key=len,
+                reverse=True,
+            ))
             for hospital in repository.list_hospitals():
                 for content in repository.list_contents(hospital.hospital_id):
                     if content.relevance_status != "pending":
@@ -107,7 +112,12 @@ class ImportWorkflow:
             ]
             report.files_failed += len({issue.file_name for issue in document_issues})
             report.issues.extend(document_issues)
-            outputs = generate_outputs(repository, target_dir, provider)
+            outputs = generate_outputs(
+                repository,
+                target_dir,
+                provider,
+                registered_products=products,
+            )
             self._write_import_report(report, target_dir)
             return WorkflowResult(report, outputs, classified_count, needs_review_count)
         finally:
