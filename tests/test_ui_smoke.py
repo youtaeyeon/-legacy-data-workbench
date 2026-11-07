@@ -645,3 +645,85 @@ def test_disabled_primary_buttons_use_disabled_colors_and_restore_enabled_styles
     assert background(window.run_button) == "#09223f"
     assert background(window.open_dashboard_button) == "#245c9e"
     window.close()
+
+def test_large_source_file_in_real_ai_mode_can_be_cancelled_before_workflow(tmp_path, monkeypatch):
+    from hospital_marketing.documents.size_warnings import LARGE_SOURCE_FILE_THRESHOLD_BYTES
+
+    _app()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "large.txt").write_text("x" * (LARGE_SOURCE_FILE_THRESHOLD_BYTES + 1), encoding="utf-8")
+    target = tmp_path / "target"
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(
+        provider_id="openai",
+        mock_mode=False,
+        enabled_extensions=(".txt",),
+    ))
+    workflow = FakeWorkflow(target / "dashboard" / "index.html")
+    confirmations = []
+    window = MainWindow(settings_store, workflow)
+    monkeypatch.setattr(
+        window,
+        "_confirm_large_source_files",
+        lambda files: confirmations.append(tuple(item.file_name for item in files)) or False,
+        raising=False,
+    )
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window.run_button.click()
+
+    assert len(confirmations) == 1
+    assert confirmations[0] == ("large.txt",)
+    assert workflow.calls == []
+
+
+def test_large_source_file_in_real_ai_mode_continues_after_confirmation(tmp_path, monkeypatch):
+    from hospital_marketing.documents.size_warnings import LARGE_SOURCE_FILE_THRESHOLD_BYTES
+
+    _app()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "large.txt").write_text("x" * (LARGE_SOURCE_FILE_THRESHOLD_BYTES + 1), encoding="utf-8")
+    target = tmp_path / "target"
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(provider_id="openai", mock_mode=False, enabled_extensions=(".txt",)))
+    workflow = FakeWorkflow(target / "dashboard" / "index.html")
+    window = MainWindow(settings_store, workflow)
+    monkeypatch.setattr(window, "_confirm_large_source_files", lambda _files: True, raising=False)
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window.run_button.click()
+
+    assert len(workflow.calls) == 1
+    assert "큰 원본 파일" in window.status_label.text()
+
+
+def test_large_source_file_in_mock_mode_runs_without_confirmation_and_shows_warning(tmp_path, monkeypatch):
+    from hospital_marketing.documents.size_warnings import LARGE_SOURCE_FILE_THRESHOLD_BYTES
+
+    _app()
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "large.txt").write_text("x" * (LARGE_SOURCE_FILE_THRESHOLD_BYTES + 1), encoding="utf-8")
+    target = tmp_path / "target"
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(enabled_extensions=(".txt",)))
+    workflow = FakeWorkflow(target / "dashboard" / "index.html")
+    window = MainWindow(settings_store, workflow)
+    monkeypatch.setattr(
+        window,
+        "_confirm_large_source_files",
+        lambda _files: pytest.fail("목업 모드에서는 확인 창을 띄우지 않습니다."),
+        raising=False,
+    )
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window.run_button.click()
+
+    assert len(workflow.calls) == 1
+    assert "실제 AI로 실행하면" in window.status_label.text()
+    assert "large.txt" in window.status_label.text()

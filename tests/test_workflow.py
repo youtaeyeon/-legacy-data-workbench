@@ -109,3 +109,31 @@ def test_workflow_uses_enabled_product_keywords_for_classification(tmp_path):
     ImportWorkflow(settings_store=settings, provider_registry=Registry()).run(source, target)
 
     assert provider.products == ("울트라클리어 엘리트", "울트라클리어")
+
+def test_workflow_reports_large_source_warning_without_counting_failure(tmp_path):
+    from hospital_marketing.documents.size_warnings import LARGE_SOURCE_FILE_THRESHOLD_BYTES
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "large.txt").write_text("x" * (LARGE_SOURCE_FILE_THRESHOLD_BYTES + 1), encoding="utf-8")
+    target = tmp_path / "target"
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json")).run(
+        source,
+        target,
+        enabled_extensions=(".txt",),
+    )
+
+    warning = next(issue for issue in result.report.issues if issue.code == "large_source_file")
+    saved_report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
+    saved_warning = next(issue for issue in saved_report["issues"] if issue["code"] == "large_source_file")
+    assert warning.file_name == "large.txt"
+    assert "넘을 수 있습니다" in warning.message
+    assert result.report.files_failed == 0
+    assert saved_warning == {
+        "file_name": warning.file_name,
+        "sheet": None,
+        "row": None,
+        "field": None,
+        "code": "large_source_file",
+        "message": warning.message,
+    }
