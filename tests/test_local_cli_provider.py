@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -74,6 +76,42 @@ def test_long_prompt_is_passed_through_utf8_stdin(tmp_path, monkeypatch):
     args, options = calls[0]
     assert "x" * 100 not in " ".join(args)
     assert options["input"] == prompt
+
+
+@pytest.mark.parametrize(
+    ("cli", "expected_command"),
+    [
+        ("claude", ["cmd.exe", "/d", "/s", "/c", 'C:\\tools\\claude.cmd -p --output-format json --tools ""']),
+        ("codex", ["cmd.exe", "/d", "/s", "/c", "C:\\tools\\codex.cmd exec -"]),
+        ("gemini", ["cmd.exe", "/d", "/s", "/c", "C:\\tools\\gemini.cmd -p"]),
+    ],
+)
+def test_windows_cmd_receives_untrusted_prompt_only_via_stdin(
+    tmp_path, monkeypatch, cli, expected_command
+):
+    calls = []
+    prompt = '{"title": "a & b | %PATH% > x ^ \\\"quoted\\\""}'
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return _completed(json.dumps({"result": "ok"}) if cli == "claude" else "ok")
+
+    monkeypatch.setattr(
+        "hospital_marketing.ai.adapters.local_cli_provider.os",
+        SimpleNamespace(name="nt", environ=os.environ),
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ai.adapters.local_cli_provider.shutil.which",
+        lambda _name: f"C:\\tools\\{cli}.cmd",
+    )
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.subprocess.run", fake_run)
+
+    assert LocalCLIProvider(cli, temp_dir=tmp_path)._complete(prompt) == "ok"
+
+    command, options = calls[0]
+    assert command == expected_command
+    assert options["input"] == prompt
+    assert prompt not in " ".join(command)
 
 
 def test_missing_cli_timeout_nonzero_and_invalid_claude_json_are_translated(tmp_path, monkeypatch):

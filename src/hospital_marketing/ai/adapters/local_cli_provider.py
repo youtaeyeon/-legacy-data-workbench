@@ -54,7 +54,8 @@ class LocalCLIProvider(AIProvider):
             raise ProviderRequestError(f"{self.cli} CLI를 찾을 수 없습니다. 먼저 설치하고 로그인해 주세요.")
 
         command = self._base_command(executable)
-        use_stdin = len(prompt) > STDIN_PROMPT_THRESHOLD
+        is_windows_cmd = os.name == "nt" and executable.lower().endswith((".cmd", ".bat"))
+        use_stdin = len(prompt) > STDIN_PROMPT_THRESHOLD or is_windows_cmd
         if use_stdin:
             if self.cli == "codex":
                 command.append("-")
@@ -65,7 +66,7 @@ class LocalCLIProvider(AIProvider):
         if self.cli == "claude":
             command.extend(["--output-format", "json", "--tools", ""])
 
-        if os.name == "nt" and executable.lower().endswith(".cmd"):
+        if is_windows_cmd:
             command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", subprocess.list2cmdline(command)]
 
         environment = os.environ.copy()
