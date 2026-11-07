@@ -9,6 +9,7 @@ from typing import Callable
 from .ai.registry import ProviderRegistry
 from .credentials import CredentialStore
 from .documents.conversion import convert_source_documents
+from .documents.size_warnings import find_large_source_files, large_source_file_issue
 from .domain import ContentScript
 from .importer import ImportService
 from .outputs.generate import OutputManifest, generate_outputs
@@ -53,6 +54,11 @@ class ImportWorkflow:
         target_dir = Path(target_dir)
         settings = self.settings_store.load()
         extensions = tuple(enabled_extensions) if enabled_extensions is not None else settings.enabled_extensions
+        large_source_files = find_large_source_files(
+            source_dir,
+            extensions,
+            exclude_dir=target_dir,
+        )
         repository = self.repository_factory(target_dir / "data" / "app.db")
         repository.initialize()
         try:
@@ -61,6 +67,7 @@ class ImportWorkflow:
                 enabled_extensions=extensions,
                 exclude_dir=target_dir,
             )
+            report.issues.extend(large_source_file_issue(item) for item in large_source_files)
             if mock_mode or provider_id == "mock":
                 provider = self.provider_registry.create("mock")
             else:

@@ -76,6 +76,7 @@ windows-claude ──(고객이 요청하면 → GitHub Releases에 zip 업로�
   2. `gh pr list --state open --label changes-requested`
   3. `in-progress` 라벨이 붙은 열린 이슈가 없을 때만: `gh issue list --state open --label ready-for-dev`에서 **번호가 가장 작은** 이슈
      - 여기서 "작업 중"은 **이슈에 `in-progress` 라벨이 붙은 경우만** 뜻합니다. 검토 중이거나 수정 요청을 받은 PR이 있어도 새 `ready-for-dev` 이슈를 시작해도 됩니다.
+  - 단, `in-progress` 이슈에 열린 PR이 아직 없으면 그 이슈를 **이어서 마무리하는 것**이 3번보다 먼저입니다(이전 실행이 중간에 끝난 경우).
   - 이슈를 시작하면 `ready-for-dev`를 떼고 `in-progress`를 붙입니다. PR을 열면 그 이슈의 `in-progress`를 뗍니다.
 - **wsl-claude:** `gh pr list --state open --label needs-review`에서 번호가 가장 작은 PR 한 건을 검토합니다.
 - **windows-claude:** `gh pr list --state merged --label needs-windows-test`가 있으면 최신 main을 **한 번** 테스트하고, 결과를 그 PR들에 함께 반영합니다.
@@ -84,6 +85,9 @@ windows-claude ──(고객이 요청하면 → GitHub Releases에 zip 업로�
 
 - 같은 PR에 wsl-claude의 수정 요청이 **3번째**가 되면, 더 요청하지 않고 `needs-human`을 붙인 뒤 이유를 댓글로 남깁니다.
 - 같은 문제로 `windows-test-failed` 이슈가 **3번째** 생기면, 새로 만들지 않고 기존 이슈에 `needs-human`을 붙입니다.
+- **자동 실행 중에는 정해진 절차(커밋, push, PR 생성, 라벨 변경, 원격 브랜치와 일반 merge)를 하기 전에 확인을 묻지 않습니다.** 그대로 진행합니다. 로그나 터미널에만 질문을 남기고 멈추면 아무도 보지 못해 흐름이 멈춥니다.
+- 질문이 꼭 필요하면 해당 이슈·PR에 `needs-human`과 질문 댓글을 남깁니다. 이것이 사람에게 묻는 유일한 방법입니다.
+- 로컬 브랜치가 원격 PR 브랜치와 갈라졌으면 `git merge origin/<브랜치>`로 합친 뒤(충돌은 로컬 내용 기준으로 해결) 일반 push합니다. force push는 하지 않습니다.
 - 작업 도중 판단할 수 없는 문제(요구사항이 모호함, 외부 계정이나 결제가 필요함, 다른 역할의 폴더를 고쳐야 함)를 만나면, 추측해서 진행하지 말고 `needs-human`과 함께 질문을 댓글로 남깁니다.
 
 ## 프로젝트 기본 정보
@@ -228,6 +232,14 @@ winget install --id GitHub.cli -e
      코드는 직접 고치지 않습니다. 수정은 `wsl-hermes`가 합니다.
    - 자동 실행 중에는 사용자 조작이 필요한 단계(5단계의 데이터 가져오기 요청 등)를 건너뜁니다. 대신 UI Automation이나 offscreen으로 확인할 수 있는 만큼만 확인합니다.
 8. 이 폴더에서는 커밋하거나 푸시하지 않습니다. 아래 릴리스 절차의 `gh release create`(태그 생성)만 예외입니다.
+
+### 실제 AI 연결 테스트 (`.env`, windows-claude 전용)
+
+고객이 `C:\work\hospital-marketing-mvp\.env`에 테스트용 키를 넣어 두었습니다(예: `GEMINI_API_KEY=...`). `.env`는 `.gitignore`에 있어 커밋되지 않습니다.
+- **키 값을 읽어서 출력하거나, 로그·댓글·이슈·커밋에 쓰지 않습니다.** 확인할 때는 "키 있음/없음"만 봅니다.
+- `.env`가 있을 때만 "main이 바뀔 때마다" 4단계 뒤에 실제 연결 테스트를 합니다. 실행 명령은 `pytest -m live`이고, 기본 `pytest`는 이 테스트를 건너뜁니다. 테스트 코드가 `.env`를 직접 읽습니다.
+- EXE 확인에서는 별도 `APPDATA`로 실행합니다. AI 설정 창 키 입력란에 키를 넣은 상태로 `연결 테스트`만 누르고, **`저장`은 누르지 않습니다**(Windows 자격 증명 저장소에 남기지 않기 위해). 결과 문구만 PR 댓글에 적습니다.
+- 무료 등급 한도를 아끼기 위해 실제 요청은 실행 한 번에 몇 건 이내로 합니다. HTTP 429가 나오면 실패가 아니라 "한도 초과로 확인 보류"로 보고합니다.
 
 ### 릴리스 (EXE 배포)
 
