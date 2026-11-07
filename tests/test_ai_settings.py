@@ -402,6 +402,51 @@ def test_model_selector_has_recommendations_and_accepts_direct_input(tmp_path):
     assert dialog.model_combo.currentText() == "custom-model-2026"
 
 
+def test_local_cli_settings_use_allowlisted_cli_without_api_key(tmp_path):
+    _app()
+    credentials = FakeCredentials(saved_key="test-key-must-not-be-used")
+    dialog = _dialog(tmp_path, credentials=credentials)
+    dialog.provider_combo.setCurrentText("local-cli")
+
+    assert dialog.model_label.text() == "CLI 선택"
+    assert [dialog.model_combo.itemText(i) for i in range(dialog.model_combo.count())] == ["claude", "codex", "gemini"]
+    assert not dialog.model_combo.isEditable()
+    assert not dialog.api_key_edit.isEnabled()
+    assert not dialog.mock_mode_checkbox.isEnabled()
+    assert dialog.key_status_label.text() == "사용 안 함"
+    assert "실험 기능" in dialog.message_label.text()
+    assert "약관" in dialog.message_label.text()
+    assert "CLI" in dialog.message_label.text()
+
+    dialog.api_key_edit.setText("must-not-be-saved")
+    dialog.save_button.click()
+    assert credentials.values == {}
+
+
+def test_local_cli_connection_test_runs_without_api_key_or_http_client(tmp_path, monkeypatch):
+    _app()
+    client = FakeHttpClient()
+    commands = []
+
+    def fake_run(args, **kwargs):
+        commands.append((args, kwargs))
+        return __import__("subprocess").CompletedProcess(args, 0, '{"result":"{\\"ok\\":true}"}', "")
+
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.shutil.which", lambda _name: "/bin/claude")
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.subprocess.run", fake_run)
+    dialog = _dialog(tmp_path, client=client)
+    dialog.provider_combo.setCurrentText("local-cli")
+    dialog.api_key_edit.setText("must-not-be-used")
+    dialog.test_connection_button.click()
+    _wait_for_connection()
+
+    assert len(commands) == 1
+    assert commands[0][1]["shell"] is False
+    assert client.calls == []
+    assert "연결 성공" in dialog.connection_status_label.text()
+    assert "must-not-be-used" not in str(commands[0])
+
+
 def test_key_status_shows_presence_without_revealing_saved_key(tmp_path):
     _app()
     dialog = _dialog(tmp_path, credentials=FakeCredentials(saved_key="secret-test-key"))

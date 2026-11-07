@@ -66,20 +66,25 @@ def _send_connection_test(
     cancel_event: Event,
 ) -> None:
     def run_with_client(client: Any) -> None:
-        provider = provider_registry.create(
-            provider_id,
-            api_key=api_key,
-            model=model_id,
-            http_client=_CancellationAwareHttpClient(client, cancel_event),
-            on_retry=on_retry,
-            sleep_fn=sleep_fn,
-        )
+        if provider_id == "local-cli":
+            provider = provider_registry.create(provider_id, cli=model_id, cancel_event=cancel_event)
+        else:
+            provider = provider_registry.create(
+                provider_id,
+                api_key=api_key,
+                model=model_id,
+                http_client=_CancellationAwareHttpClient(client, cancel_event),
+                on_retry=on_retry,
+                sleep_fn=sleep_fn,
+            )
         connection_test = getattr(provider, "test_connection", None)
         if not callable(connection_test):
             raise ProviderConfigurationError("선택한 제공자는 연결 테스트를 지원하지 않습니다.")
         connection_test()
 
-    if http_client is None:
+    if provider_id == "local-cli":
+        run_with_client(None)
+    elif http_client is None:
         with httpx.Client(timeout=30.0) as client:
             run_with_client(client)
     else:
@@ -190,6 +195,7 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("제공자", self.provider_combo)
 
         self.model_combo = QtWidgets.QComboBox()
+        self.model_label = QtWidgets.QLabel("모델 ID (직접 입력 가능)")
         self.model_combo.setObjectName("model_combo")
         self.model_combo.setEditable(True)
         self.model_edit = self.model_combo.lineEdit()
@@ -198,7 +204,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self.model_edit.setPlaceholderText("권장 모델을 고르거나 모델 ID를 입력하세요")
         self._populate_model_choices(settings.provider_id, settings.model_id, preserve_custom=True)
         self.provider_combo.currentTextChanged.connect(self._provider_changed)
-        form.addRow("모델 ID (직접 입력 가능)", self.model_combo)
+        form.addRow(self.model_label, self.model_combo)
 
         self.api_key_edit = QtWidgets.QLineEdit()
         self.api_key_edit.setObjectName("api_key_edit")
@@ -209,6 +215,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self.mock_mode_checkbox = QtWidgets.QCheckBox("목업 모드 (외부 AI 호출 안 함)")
         self.mock_mode_checkbox.setObjectName("mock_mode_checkbox")
         self.mock_mode_checkbox.setChecked(settings.mock_mode)
+        if settings.provider_id == "local-cli":
+            self.mock_mode_checkbox.setChecked(False)
+            self.mock_mode_checkbox.setEnabled(False)
         form.addRow("과제 테스트", self.mock_mode_checkbox)
 
         self.key_status_label = QtWidgets.QLabel()
@@ -288,6 +297,7 @@ class SettingsDialog(QtWidgets.QDialog):
         preserve_custom: bool,
     ) -> None:
         models = RECOMMENDED_MODELS.get(provider_id, ())
+        is_local_cli = provider_id == "local-cli"
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
         self.model_combo.addItems(models)
@@ -303,7 +313,19 @@ class SettingsDialog(QtWidgets.QDialog):
             else:
                 selected_model = models[0] if models else model_id.strip()
         self.model_combo.setCurrentText(selected_model)
+        self.model_combo.setEditable(not is_local_cli)
         self.model_combo.blockSignals(False)
+        self.model_label.setText("CLI 선택" if is_local_cli else "모델 ID (직접 입력 가능)")
+        if hasattr(self, "api_key_edit"):
+            self.api_key_edit.setEnabled(not is_local_cli)
+        if hasattr(self, "clear_key_button"):
+            self.clear_key_button.setEnabled(not is_local_cli)
+        if hasattr(self, "message_label") and is_local_cli:
+            self.message_label.setText(
+                "실험 기능 · 본인 PC에 설치·로그인한 CLI 사용 · 각 서비스 약관과 사용량 한도를 따릅니다. API 키를 사용하지 않습니다."
+            )
+        if hasattr(self, "key_status_label"):
+            self.key_status_label.setText("사용 안 함" if is_local_cli else "")
 
     def _provider_changed(self, provider_id: str) -> None:
         self._populate_model_choices(
@@ -311,9 +333,17 @@ class SettingsDialog(QtWidgets.QDialog):
             self.model_combo.currentText(),
             preserve_custom=False,
         )
+        if provider_id != "local-cli" and "실험 기능" in self.message_label.text():
+            self.message_label.setText("API 키는 OS 자격 증명 저장소에 보관됩니다.")
+        self.mock_mode_checkbox.setEnabled(provider_id != "local-cli")
+        if provider_id == "local-cli":
+            self.mock_mode_checkbox.setChecked(False)
         self._refresh_key_status()
 
     def _refresh_key_status(self) -> None:
+        if self.provider_combo.currentText() == "local-cli":
+            self.key_status_label.setText("사용 안 함")
+            return
         try:
             has_key = bool(self.credential_store.get(self.provider_combo.currentText()))
         except CredentialStoreError:
@@ -361,16 +391,16 @@ class SettingsDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "모델 설정 확인", validation_error)
             return
 
-        api_key = self.api_key_edit.text().strip()
+        api_key = self.api_key_edit.text().strip() if provider_id != "local-cli" else ""
         try:
-            if not api_key:
+            if provider_id != "local-cli" and not api_key:
                 api_key = self.credential_store.get(provider_id) or ""
         except CredentialStoreError as exc:
             self.connection_status_label.setText(f"연결 실패: {exc}")
             self.message_label.setText(str(exc))
             QtWidgets.QMessageBox.warning(self, "API 키 확인", str(exc))
             return
-        if not api_key:
+        if provider_id != "local-cli" and not api_key:
             message = "API 키가 없습니다. 키를 입력한 뒤 저장하거나, 입력란에 키를 입력한 상태로 테스트하세요."
             self.connection_status_label.setText(message)
             self.message_label.setText(message)
@@ -550,7 +580,7 @@ class SettingsDialog(QtWidgets.QDialog):
         if validation_error:
             self.message_label.setText(validation_error)
             return
-        api_key = self.api_key_edit.text()
+        api_key = self.api_key_edit.text() if provider_id != "local-cli" else ""
         try:
             if api_key:
                 self.credential_store.set(provider_id, api_key)
