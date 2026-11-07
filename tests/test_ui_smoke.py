@@ -83,6 +83,27 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     assert window.export_dashboard_button.isEnabled()
 
 
+def test_main_window_status_redacts_masked_provider_key(tmp_path):
+    _app()
+    masked_token = "sk-proj-" + "*" * 3 + "abcd"
+
+    class FailingWorkflow:
+        def run(self, *_args, **_kwargs):
+            raise ProviderRequestError(f"HTTP 401 Incorrect API key provided: {masked_token}")
+
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), cast(ImportWorkflow, FailingWorkflow()))
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(tmp_path / "target"))
+
+    window.run_button.click()
+
+    status = window.status_label.text()
+    assert "[REDACTED]" in status
+    assert "sk-proj-" not in status
+    assert "abcd" not in status
+    window.close()
+
+
 def test_open_dashboard_uses_injected_open_handler(tmp_path):
     _app()
     dashboard = tmp_path / "dashboard" / "index.html"

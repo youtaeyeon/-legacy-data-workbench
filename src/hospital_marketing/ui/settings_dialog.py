@@ -17,7 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..ai.models import RECOMMENDED_MODELS, model_id_error
 from ..ai.registry import ProviderRegistry
 from ..credentials import CredentialStore, CredentialStoreError
-from ..providers import ProviderConfigurationError, ProviderRequestError
+from ..providers import ProviderConfigurationError, ProviderRequestError, sanitize_provider_error_message
 from ..settings import SettingsStore
 
 
@@ -26,20 +26,22 @@ CONNECTION_ERROR_LOG_NAME = "ai-connection-errors.jsonl"
 
 
 def _sanitize_connection_error(message: str, api_key: str) -> str:
-    if api_key:
-        message = message.replace(api_key, "[REDACTED]")
-    message = re.sub(
-        r"(?i)\b(?:authorization|x-api-key|x-goog-api-key)\s*[:=]\s*(?:bearer\s+)?\S+",
-        "[REDACTED HEADER]",
-        message,
-    )
-    message = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [REDACTED]", message)
-    return " ".join(message.split())[:1000]
+    return sanitize_provider_error_message(message, api_key)[:1000]
 
 
 def _provider_status_code(message: str) -> int | None:
     match = re.search(r"\bHTTP\s+(\d{3})\b", message, flags=re.IGNORECASE)
     return int(match.group(1)) if match else None
+
+
+def _local_error_time(utc_timestamp: str) -> str:
+    try:
+        timestamp = datetime.fromisoformat(utc_timestamp)
+    except (TypeError, ValueError):
+        return utc_timestamp
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 class _CancellationAwareHttpClient:
@@ -520,7 +522,7 @@ class SettingsDialog(QtWidgets.QDialog):
             else "\n\n로그 파일을 저장하지 못했습니다."
         )
         details = (
-            f"시각: {record['occurred_at']}\n"
+            f"시각(현지): {_local_error_time(record['occurred_at'])}\n"
             f"제공자: {record['provider_id']}\n"
             f"모델: {record['model_id']}\n"
             f"상태: {status_text}\n"

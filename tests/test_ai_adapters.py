@@ -482,6 +482,39 @@ def test_provider_error_detail_is_limited_to_two_hundred_characters():
     assert len(detail) == 200
 
 
+@pytest.mark.parametrize(
+    "prefix",
+    ["Incorrect API key provided: ", "Provider echoed token "],
+)
+@pytest.mark.parametrize("star_count", [3, 9])
+@pytest.mark.parametrize("split_suffix", [False, True])
+def test_provider_error_detail_redacts_masked_key_tokens(prefix, star_count, split_suffix):
+    masked_token = "sk-proj-" + "*" * star_count + (" abcd" if split_suffix else "abcd")
+    fake_api_key = "fake-test-key"
+    client = SequenceHttpClient(
+        [
+            _http_response(
+                401,
+                payload={"error": {"message": f"{prefix}{masked_token}"}},
+            )
+        ]
+    )
+    provider = OpenAIProvider(
+        api_key=fake_api_key,
+        model="test-model",
+        http_client=client,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    error = str(exc.value)
+    assert len(client.calls) == 1
+    assert "[REDACTED]" in error
+    assert "sk-proj-" not in error
+    assert "abcd" not in error
+
+
 def test_registry_exposes_all_selected_providers_and_accepts_injected_client():
     registry = ProviderRegistry()
     assert set(registry.available()) == {"mock", "openai", "anthropic", "gemini"}

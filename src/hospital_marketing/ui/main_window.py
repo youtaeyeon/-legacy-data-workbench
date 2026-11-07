@@ -9,7 +9,7 @@ from typing import Callable
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..documents import SUPPORTED_EXTENSIONS
-from ..providers import ProviderConfigurationError, ProviderRequestError
+from ..providers import ProviderConfigurationError, ProviderRequestError, sanitize_provider_error_message
 from ..settings import AppSettings, SettingsStore
 from ..version import APP_VERSION
 from ..workflow import ImportWorkflow
@@ -258,7 +258,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
         except (ProviderConfigurationError, ProviderRequestError) as exc:
-            self.status_label.setText(f"AI 처리 실패: {exc} 목업 모드로 다시 실행할 수 있습니다.")
+            safe_message = sanitize_provider_error_message(str(exc))
+            self.status_label.setText(f"AI 처리 실패: {safe_message} 목업 모드로 다시 실행할 수 있습니다.")
             self.open_dashboard_button.setEnabled(False)
             self.export_dashboard_button.setEnabled(False)
         except Exception:

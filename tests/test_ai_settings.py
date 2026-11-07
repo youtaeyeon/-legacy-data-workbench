@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from datetime import datetime, timezone
 from threading import Event
 from typing import Any, cast
 
@@ -14,6 +15,7 @@ from PySide6.QtTest import QTest
 from hospital_marketing.ai.registry import ProviderRegistry
 from hospital_marketing.providers import ProviderRequestError
 from hospital_marketing.settings import SettingsStore
+from hospital_marketing.ui import settings_dialog
 from hospital_marketing.ui.settings_dialog import SettingsDialog
 
 
@@ -619,3 +621,98 @@ def test_connection_failure_logs_sanitized_details_and_opens_details_view(tmp_pa
     assert "HTTP 503" in details[0][1]
     assert fake_key not in details[0][1]
     dialog.close()
+
+
+@pytest.mark.parametrize(
+    "error_prefix",
+    ["Incorrect API key provided: ", "Provider echoed token "],
+)
+@pytest.mark.parametrize("star_count", [3, 9])
+@pytest.mark.parametrize("split_suffix", [False, True])
+def test_masked_provider_key_is_redacted_everywhere_and_ui_time_is_local(
+    tmp_path,
+    monkeypatch,
+    error_prefix,
+    star_count,
+    split_suffix,
+):
+    _app()
+    masked_token = "sk-proj-" + "*" * star_count + (" abcd" if split_suffix else "abcd")
+
+    class FailingProvider:
+        def test_connection(self):
+            raise ProviderRequestError(f"HTTP 401 {error_prefix}{masked_token}")
+
+    registry = ProviderRegistry(
+        providers=cast(
+            Any,
+            {
+                "mock": lambda **_kwargs: None,
+                "openai": lambda **_kwargs: FailingProvider(),
+            },
+        )
+    )
+    dialog = _dialog(
+        tmp_path,
+        client=object(),
+        provider_registry=registry,
+        retry_sleep_fn=lambda _delay: None,
+    )
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    dialog.provider_combo.setCurrentText("openai")
+    dialog.api_key_edit.setText("fake-test-key")
+
+    dialog.test_connection_button.click()
+    _wait_for_connection()
+
+    status_text = dialog.connection_status_label.text()
+    log_path = tmp_path / "reports" / "ai-connection-errors.jsonl"
+    log_text = log_path.read_text(encoding="utf-8")
+    record = json.loads(log_text.splitlines()[-1])
+    assert record["occurred_at"].endswith("+00:00")
+    assert record["status_code"] == 401
+
+    details = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "information",
+        lambda _parent, title, text: details.append((title, text)),
+    )
+    dialog.error_details_button.click()
+    details_text = details[0][1]
+    local_time = datetime.fromisoformat(record["occurred_at"]).astimezone().strftime(
+        "%Y-%m-%d %H:%M:%S %Z"
+    )
+
+    for output in (status_text, log_text, details_text):
+        assert "sk-proj-" not in output
+        assert "abcd" not in output
+        assert "[REDACTED]" in output
+    assert f"시각(현지): {local_time}" in details_text
+    assert record["occurred_at"] not in details_text
+    dialog.close()
+
+
+def test_local_error_time_assumes_utc_for_naive_timestamp(monkeypatch):
+    class NaiveTimestamp:
+        tzinfo = None
+
+        def replace(self, *, tzinfo):
+            assert tzinfo is timezone.utc
+            return datetime(2026, 1, 1, tzinfo=tzinfo)
+
+        def astimezone(self):
+            raise AssertionError("naive log timestamps must first be interpreted as UTC")
+
+    class FakeDateTime:
+        @staticmethod
+        def fromisoformat(_value):
+            return NaiveTimestamp()
+
+    monkeypatch.setattr(settings_dialog, "datetime", FakeDateTime)
+    expected = datetime(2026, 1, 1, tzinfo=timezone.utc).astimezone().strftime(
+        "%Y-%m-%d %H:%M:%S %Z"
+    )
+
+    assert settings_dialog._local_error_time("2026-01-01T00:00:00") == expected
