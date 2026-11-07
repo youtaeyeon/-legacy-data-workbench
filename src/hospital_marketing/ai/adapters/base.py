@@ -16,7 +16,7 @@ import httpx
 from ..base import AIProvider, RelevanceResult
 from ..models import RECOMMENDED_MODELS
 from ...domain import ContentItem, Hospital
-from ...providers import ProviderConfigurationError, ProviderRequestError
+from ...providers import ProviderConfigurationError, ProviderRequestError, sanitize_provider_error_message
 
 
 SYSTEM_PROMPT = (
@@ -121,13 +121,7 @@ class RemoteAIProvider(AIProvider, ABC):
             for sensitive in (self._api_key, prompt):
                 if sensitive:
                     detail = detail.replace(sensitive, "[REDACTED]")
-            detail = " ".join(detail.split())
-            detail = re.sub(
-                r"(?i)\b(?:authorization|x-api-key|x-goog-api-key|anthropic-version)\s*[:=]\s*(?:bearer\s+)?\S+",
-                "[REDACTED HEADER]",
-                detail,
-            )
-            detail = re.sub(r"(?i)\bbearer\s+\S+", "Bearer [REDACTED]", detail)
+            detail = sanitize_provider_error_message(detail)
             if is_message and self._contains_prompt_excerpt(detail, prompt):
                 continue
             if detail:
