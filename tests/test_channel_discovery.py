@@ -57,3 +57,15 @@ def test_invalid_response_is_friendly_and_rejection_never_registers_channel(tmp_
     assert service.list_candidates(hospital.hospital_id)[0].status == "rejected"
     assert repository.list_channels(hospital.hospital_id) == []
     repository.close()
+
+
+def test_parse_candidates_accepts_json_markdown_code_fence():
+    response = '''```json
+{"channels": [{"platform": "홈페이지", "channel_name": "목업 병원", "url": "https://clinic.example.test", "evidence": "공식 사이트", "confidence": 0.9}]}
+```'''
+
+    candidates = parse_candidates(response)
+
+    assert len(candidates) == 1
+    assert candidates[0].platform == "홈페이지"
+    assert candidates[0].url == "https://clinic.example.test"

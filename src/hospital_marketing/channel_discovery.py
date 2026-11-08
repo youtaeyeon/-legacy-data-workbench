@@ -97,7 +97,13 @@ class ChannelDiscoveryService:
 
 def parse_candidates(response: str) -> list[ChannelCandidate]:
     try:
-        data = json.loads(response)
+        payload = response.strip()
+        if payload.startswith("```") and payload.endswith("```"):
+            lines = payload.splitlines()
+            if len(lines) < 3:
+                raise ValueError
+            payload = "\n".join(lines[1:-1]).strip()
+        data = json.loads(payload)
         rows = data["channels"]
         if not isinstance(rows, list):
             raise TypeError
