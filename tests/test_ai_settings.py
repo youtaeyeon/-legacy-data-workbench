@@ -514,6 +514,8 @@ def test_cli_install_check_runs_in_background_and_updates_status(tmp_path, monke
     assert "설치됨 v2.1.0" in dialog.cli_install_status_label.text()
     assert "Node.js" in dialog.cli_node_status_label.text()
     assert "npm 없음" in dialog.cli_node_status_label.text()
+    dialog.close()
+    QtWidgets.QApplication.processEvents()
 
 
 def test_missing_local_cli_blocks_save_and_shows_official_install_guide(tmp_path, monkeypatch):
@@ -544,9 +546,9 @@ def test_missing_local_cli_blocks_save_and_shows_official_install_guide(tmp_path
 
     assert dialog.settings_store.load().provider_id == "mock"
     assert messages
-    assert "npm install -g @openai/codex" in messages[0][1]
+    assert "npm.cmd install -g @openai/codex" in messages[0][1]
     assert "Node.js" in messages[0][1]
-    assert "설치 후 터미널에서 해당 CLI를 한 번 실행해 로그인하세요" in messages[0][1]
+    assert "지금 설치할까요" in messages[0][1]
     assert "developers.openai.com/codex/cli" in messages[0][1]
 
 
@@ -571,7 +573,71 @@ def test_missing_local_cli_blocks_connection_test(tmp_path, monkeypatch):
     dialog.test_connection_button.click()
 
     assert messages and "설치되어 있지 않습니다" in messages[0][1]
-    assert "설치 후 터미널에서 해당 CLI를 한 번 실행해 로그인하세요" in messages[0][1]
+    assert "claude가 설치되어 있지 않습니다" in messages[0][1]
+
+
+def test_local_cli_install_and_login_actions_follow_confirmation_and_auth_state(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from hospital_marketing.ai.cli_status import CLIStatus
+
+    _app()
+    monkeypatch.setattr("hospital_marketing.ui.settings_dialog._is_windows", lambda: True)
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {cli: CLIStatus(cli != "codex", None, None, None) for cli in ("claude", "codex", "gemini")},
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_node_tool_status",
+        lambda: {"node": None, "npm": None},
+    )
+    starts = []
+    process = SimpleNamespace(poll=lambda: 0)
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.start_cli_terminal",
+        lambda cli, **kwargs: (starts.append((cli, kwargs)) or process),
+    )
+    dialog = _dialog(tmp_path)
+    dialog.provider_combo.setCurrentText("local-cli")
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+    dialog.model_combo.setCurrentText("codex")
+    monkeypatch.setattr("hospital_marketing.ui.settings_dialog._is_windows", lambda: False)
+    dialog._update_cli_status_label()
+    assert dialog.install_cli_button.isHidden()
+    monkeypatch.setattr("hospital_marketing.ui.settings_dialog._is_windows", lambda: True)
+    dialog._update_cli_status_label()
+    dialog._confirm_cli_install = lambda message: False
+
+    dialog.install_cli_button.click()
+
+    assert not starts
+    assert "winget install --id OpenJS.NodeJS.LTS" in dialog.message_label.text()
+    assert "npm.cmd install -g @openai/codex" in dialog.message_label.text()
+    assert "developers.openai.com/codex/cli" in dialog.message_label.text()
+
+    dialog._confirm_cli_install = lambda message: True
+    dialog.install_cli_button.click()
+    QTest.qWait(600)
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+
+    assert starts == [("codex", {"install": True, "node_available": False})]
+    assert "다시 확인합니다" in dialog.connection_status_label.text()
+
+    dialog._connection_provider_id = "local-cli"
+    dialog._pending_connection_result = (False, "codex CLI 로그인이 필요합니다.", [])
+    dialog._complete_pending_connection_test()
+    assert not dialog.login_cli_button.isHidden()
+    dialog.login_cli_button.click()
+    assert starts[-1] == ("codex", {})
+    assert dialog.connection_status_label.text() == "로그인이 끝나면 창을 닫고 연결 테스트를 다시 누르세요."
+
+    dialog.provider_combo.setCurrentText("openai")
+
+    assert dialog.install_cli_button.isHidden()
+    assert dialog.login_cli_button.isHidden()
+    dialog.close()
+    QtWidgets.QApplication.processEvents()
 
 
 def test_key_status_shows_presence_without_revealing_saved_key(tmp_path):

@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 from threading import Event
@@ -24,6 +25,10 @@ from ..settings import SettingsStore
 
 MIN_CONNECTION_PROGRESS_SECONDS = 0.5
 CONNECTION_ERROR_LOG_NAME = "ai-connection-errors.jsonl"
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
 
 
 def _sanitize_connection_error(message: str, api_key: str) -> str:
@@ -228,6 +233,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self._cli_statuses: dict[str, cli_status.CLIStatus] = {}
         self._node_statuses: dict[str, str | None] = {}
         self._cli_status_worker: _CLIStatusWorker | None = None
+        self._cli_install_process: Any | None = None
         self._closing = False
         settings = settings_store.load()
         self.setWindowTitle("AI 제공자 설정")
@@ -246,6 +252,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.model_combo.setObjectName("model_combo")
         self.model_combo.setEditable(True)
         self.model_combo.currentTextChanged.connect(self._update_cli_status_label)
+        self.model_combo.activated.connect(self._on_cli_selected)
         self.model_edit = self.model_combo.lineEdit()
         if self.model_edit is not None:
             self.model_edit.setObjectName("model_edit")
@@ -295,6 +302,16 @@ class SettingsDialog(QtWidgets.QDialog):
         self.check_cli_install_button.setObjectName("check_cli_install_button")
         self.check_cli_install_button.clicked.connect(self._refresh_cli_status)
         connection_buttons.addWidget(self.check_cli_install_button)
+        self.install_cli_button = QtWidgets.QPushButton("CLI 설치")
+        self.install_cli_button.setObjectName("install_cli_button")
+        self.install_cli_button.setVisible(False)
+        self.install_cli_button.clicked.connect(self._install_selected_cli)
+        connection_buttons.addWidget(self.install_cli_button)
+        self.login_cli_button = QtWidgets.QPushButton("CLI 로그인")
+        self.login_cli_button.setObjectName("login_cli_button")
+        self.login_cli_button.setVisible(False)
+        self.login_cli_button.clicked.connect(self._login_cli)
+        connection_buttons.addWidget(self.login_cli_button)
         self.cancel_connection_button = QtWidgets.QPushButton("테스트 취소")
         self.cancel_connection_button.setObjectName("cancel_connection_button")
         self.cancel_connection_button.setVisible(False)
@@ -398,6 +415,8 @@ class SettingsDialog(QtWidgets.QDialog):
                 control.setEnabled(not is_local_cli)
 
     def _provider_changed(self, provider_id: str) -> None:
+        self.install_cli_button.setVisible(False)
+        self.login_cli_button.setVisible(False)
         self._populate_model_choices(
             provider_id,
             self.model_combo.currentText(),
@@ -436,6 +455,13 @@ class SettingsDialog(QtWidgets.QDialog):
     def _update_cli_status_label(self, *_args) -> None:
         selected_cli = self.model_combo.currentText()
         status = self._cli_statuses.get(selected_cli)
+        self.install_cli_button.setVisible(
+            self.provider_combo.currentText() == "local-cli"
+            and _is_windows()
+            and status is not None
+            and not status.installed
+        )
+        self.login_cli_button.setVisible(False)
         if status is None:
             self.cli_install_status_label.setText("CLI 설치 상태를 확인하지 못했습니다. 다시 확인해 주세요.")
         elif status.installed:
@@ -446,6 +472,16 @@ class SettingsDialog(QtWidgets.QDialog):
             self.cli_install_status_label.setText(f"{selected_cli}: 설치됨{version}")
         else:
             self.cli_install_status_label.setText(f"{selected_cli}: 설치 안 됨")
+
+    def _on_cli_selected(self, *_args) -> None:
+        if self.provider_combo.currentText() != "local-cli":
+            return
+        status = self._cli_statuses.get(self.model_combo.currentText())
+        if status is not None and not status.installed:
+            self._show_cli_install_guide(self.model_combo.currentText())
+
+    def _install_selected_cli(self, _checked: bool = False) -> None:
+        self._show_cli_install_guide(self.model_combo.currentText())
 
     def _require_cli_installed(self) -> bool:
         if self.provider_combo.currentText() != "local-cli":
@@ -463,22 +499,70 @@ class SettingsDialog(QtWidgets.QDialog):
         return False
 
     def _show_cli_install_guide(self, cli: str) -> None:
-        commands = {
-            "claude": "Windows PowerShell:\nirm https://claude.ai/install.ps1 | iex",
-            "codex": "Node.js 설치 후:\nnpm install -g @openai/codex",
-            "gemini": "Node.js 설치 후:\nnpm install -g @google/gemini-cli",
-        }
+        if cli not in cli_status.SUPPORTED_CLIS:
+            return
+        node_available = bool(self._node_statuses.get("node") and self._node_statuses.get("npm"))
+        command = cli_status.cli_install_command(cli, node_available=node_available)
+        node_note = "Node.js LTS가 없다면 먼저 설치합니다.\n" if cli in ("codex", "gemini") else ""
         message = (
-            f"{cli} CLI가 설치되어 있지 않습니다.\n\n"
-            "codex와 gemini는 먼저 Node.js LTS를 설치하고 npm이 동작하는지 확인하세요.\n"
-            f"{commands[cli]}\n\n"
-            "설치 후 터미널에서 해당 CLI를 한 번 실행해 로그인하세요.\n\n"
-            f"공식 문서: {cli_status.CLI_INSTALL_DOCS[cli]}\n"
-            "Node.js: https://nodejs.org/en/download/"
+            f"{cli}가 설치되어 있지 않습니다. 지금 설치할까요?\n\n{node_note}"
+            f"실행할 명령:\n{command}\n\n공식 문서: {cli_status.CLI_INSTALL_DOCS[cli]}"
         )
         self.message_label.setText(message)
         self.connection_status_label.setText(f"설치 필요: {cli}")
-        QtWidgets.QMessageBox.warning(self, "CLI 설치 필요", message)
+        if not _is_windows():
+            QtWidgets.QMessageBox.warning(self, "CLI 설치 필요", f"{message}\n\nWindows에서 설치할 수 있습니다.")
+            return
+        if self._confirm_cli_install(message):
+            self._start_cli_install(cli, node_available)
+
+    def _confirm_cli_install(self, message: str) -> bool:
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("CLI 설치 확인")
+        box.setText(message)
+        install_button = box.addButton("설치", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("취소", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        return box.clickedButton() is install_button
+
+    def _start_cli_install(self, cli: str, node_available: bool) -> None:
+        if self._cli_install_process is not None:
+            return
+        try:
+            self._cli_install_process = cli_status.start_cli_terminal(
+                cli, install=True, node_available=node_available
+            )
+        except OSError as exc:
+            self.connection_status_label.setText(f"설치 터미널을 열지 못했습니다: {exc}")
+            return
+        self.install_cli_button.setEnabled(False)
+        self.connection_status_label.setText(f"{cli} 설치 중… PowerShell 창에서 진행 상황을 확인하세요.")
+        QtCore.QTimer.singleShot(500, self._poll_cli_install)
+
+    def _poll_cli_install(self) -> None:
+        if self._closing:
+            self._cli_install_process = None
+            return
+        if self._cli_install_process is None:
+            return
+        if self._cli_install_process.poll() is None:
+            QtCore.QTimer.singleShot(500, self._poll_cli_install)
+            return
+        self._cli_install_process = None
+        self.install_cli_button.setEnabled(True)
+        self.connection_status_label.setText("설치 터미널이 종료되었습니다. CLI 설치 상태를 다시 확인합니다.")
+        self._refresh_cli_status()
+
+    def _login_cli(self) -> None:
+        cli = self.model_combo.currentText().strip()
+        try:
+            cli_status.start_cli_terminal(cli)
+        except OSError as exc:
+            self.connection_status_label.setText(f"로그인 터미널을 열지 못했습니다: {exc}")
+            return
+        message = "로그인이 끝나면 창을 닫고 연결 테스트를 다시 누르세요."
+        self.connection_status_label.setText(message)
+        self.message_label.setText(message)
 
     def _refresh_key_status(self) -> None:
         if self.provider_combo.currentText() == "local-cli":
@@ -650,11 +734,19 @@ class SettingsDialog(QtWidgets.QDialog):
             self.connection_status_label.setText("연결 테스트가 취소되었습니다. 진행 중 요청 결과는 무시했습니다.")
         elif succeeded:
             self.connection_status_label.setText(message)
+            self.login_cli_button.setVisible(False)
         else:
             safe_message = _sanitize_connection_error(message, api_key)
             attempt_summary = _format_connection_attempts(attempts, api_key)
             self.connection_status_label.setText(f"연결 실패: {attempt_summary} · {safe_message}")
             self._record_connection_failure(safe_message, attempts, api_key)
+            self.login_cli_button.setVisible(
+                _is_windows()
+                and self._connection_provider_id == "local-cli"
+                and any(word in safe_message.casefold() for word in ("login", "logged in", "authenticate", "authentication", "인증", "로그인"))
+            )
+            if self.login_cli_button.isVisible():
+                self.message_label.setText("CLI 인증이 필요합니다. [CLI 로그인]을 눌러 로그인한 뒤 연결 테스트를 다시 하세요.")
 
     def _get_connection_error_log_path(self) -> Path:
         settings = self.settings_store.load()
@@ -720,12 +812,14 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def reject(self) -> None:
         self._closing = True
+        self._cli_install_process = None
         if self._connection_cancel_event is not None:
             self._connection_cancel_event.set()
         super().reject()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self._closing = True
+        self._cli_install_process = None
         if self._connection_cancel_event is not None:
             self._connection_cancel_event.set()
         super().closeEvent(event)
