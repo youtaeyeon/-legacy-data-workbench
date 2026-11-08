@@ -69,3 +69,28 @@ def test_parse_candidates_accepts_json_markdown_code_fence():
     assert len(candidates) == 1
     assert candidates[0].platform == "홈페이지"
     assert candidates[0].url == "https://clinic.example.test"
+
+
+def test_parse_candidates_ignores_sources_after_unclosed_json_fence():
+    response = '''```json
+{"channels": [{"platform": "홈페이지", "channel_name": "목업 병원", "url": "https://clinic.example.test", "evidence": "공식 사이트", "confidence": 0.9}]}
+
+Sources:
+- [목업 기사](https://news.example.test/1)'''
+
+    candidates = parse_candidates(response)
+
+    assert len(candidates) == 1
+    assert candidates[0].url == "https://clinic.example.test"
+
+
+def test_parse_candidates_ignores_explanation_before_json_fence():
+    response = '''검색 결과입니다.
+```json
+{"channels": [{"platform": "홈페이지", "channel_name": "목업 병원", "url": "https://clinic.example.test", "evidence": "공식 사이트", "confidence": 0.9}]}
+```'''
+
+    candidates = parse_candidates(response)
+
+    assert len(candidates) == 1
+    assert candidates[0].url == "https://clinic.example.test"
