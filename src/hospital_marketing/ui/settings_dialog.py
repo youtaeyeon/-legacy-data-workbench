@@ -416,7 +416,10 @@ class SettingsDialog(QtWidgets.QDialog):
         if status is None:
             self.cli_install_status_label.setText("CLI 설치 상태를 확인하지 못했습니다. 다시 확인해 주세요.")
         elif status.installed:
-            version = f" v{status.version}" if status.version else " (버전 확인 실패)"
+            version_text = status.version or ""
+            if version_text and not version_text.lower().startswith("v"):
+                version_text = f"v{version_text}"
+            version = f" {version_text}" if version_text else " (버전 확인 실패)"
             self.cli_install_status_label.setText(f"{selected_cli}: 설치됨{version}")
         else:
             self.cli_install_status_label.setText(f"{selected_cli}: 설치 안 됨")

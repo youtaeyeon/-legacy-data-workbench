@@ -22,6 +22,25 @@ from hospital_marketing.ui.settings_dialog import SettingsDialog
 _APP = None
 
 
+@pytest.fixture(autouse=True)
+def _mock_cli_status_checks(monkeypatch):
+    from hospital_marketing.ai.cli_status import CLIStatus
+
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {cli: CLIStatus(True, f"/mock/{cli}", "1.0", None) for cli in ("claude", "codex", "gemini")},
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_node_tool_status",
+        lambda: {"node": None, "npm": None},
+    )
+    yield
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        app.processEvents()
+
+
 def _app():
     global _APP
     if _APP is None:
@@ -439,8 +458,6 @@ def test_saved_local_cli_is_selected_and_key_controls_disabled_on_open(tmp_path,
 
 
 def test_local_cli_connection_test_runs_without_api_key_or_http_client(tmp_path, monkeypatch):
-    from hospital_marketing.ai.cli_status import CLIStatus
-
     _app()
     client = FakeHttpClient()
     commands = []
@@ -451,10 +468,7 @@ def test_local_cli_connection_test_runs_without_api_key_or_http_client(tmp_path,
 
     monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.shutil.which", lambda _name: "/bin/claude")
     monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.subprocess.run", fake_run)
-    monkeypatch.setattr(
-        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
-        lambda: {cli: CLIStatus(True, f"/bin/{cli}", "1.0", None) for cli in ("claude", "codex", "gemini")},
-    )
+
     dialog = _dialog(tmp_path, client=client)
     dialog.provider_combo.setCurrentText("local-cli")
     assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
@@ -478,7 +492,7 @@ def test_cli_install_check_runs_in_background_and_updates_status(tmp_path, monke
     monkeypatch.setattr(
         "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
         lambda: {
-            "claude": CLIStatus(True, "/tools/claude", "2.1.0", None),
+            "claude": CLIStatus(True, "/tools/claude", "v2.1.0", None),
             "codex": CLIStatus(False, None, None, "codex CLI가 설치되지 않았습니다."),
             "gemini": CLIStatus(True, "/tools/gemini", "0.4.0", None),
         },

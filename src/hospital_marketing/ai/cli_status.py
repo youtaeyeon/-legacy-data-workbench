@@ -38,7 +38,9 @@ def _known_windows_paths(cli: str) -> tuple[Path, ...]:
     return tuple(candidates)
 
 
-def _find_executable(cli: str) -> str | None:
+def find_executable(cli: str) -> str | None:
+    if cli not in SUPPORTED_CLIS:
+        raise ValueError(f"지원하지 않는 CLI입니다: {cli}")
     executable = shutil.which(cli)
     if executable:
         return executable
@@ -58,7 +60,7 @@ def _version_command(executable: str) -> list[str]:
 def check_cli_status(cli: str) -> CLIStatus:
     if cli not in SUPPORTED_CLIS:
         raise ValueError(f"지원하지 않는 CLI입니다: {cli}")
-    executable = _find_executable(cli)
+    executable = find_executable(cli)
     if not executable:
         return CLIStatus(False, None, None, f"{cli} CLI가 설치되지 않았습니다.")
     try:

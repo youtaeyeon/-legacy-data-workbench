@@ -59,6 +59,29 @@ def test_cli_status_finds_windows_user_install_outside_path(monkeypatch, tmp_pat
     assert status.version == "2.0.0"
 
 
+def test_local_cli_provider_uses_known_install_path_outside_path(monkeypatch, tmp_path):
+    from hospital_marketing.ai.adapters.local_cli_provider import LocalCLIProvider
+
+    known = tmp_path / ".local" / "bin" / "claude.exe"
+    known.parent.mkdir(parents=True)
+    known.touch()
+    monkeypatch.setattr(cli_status.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(cli_status, "_known_windows_paths", lambda _cli: (known,))
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, '{"result":"ok"}', "")
+
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.subprocess.run", fake_run)
+    provider = LocalCLIProvider("claude", temp_dir=tmp_path)
+
+    provider.test_connection()
+
+    assert calls
+    assert calls[0][0][0] == str(known)
+
+
 def test_cli_status_translates_version_timeout(monkeypatch):
     monkeypatch.setattr(cli_status.shutil, "which", lambda _name: "/usr/bin/gemini")
     monkeypatch.setattr(

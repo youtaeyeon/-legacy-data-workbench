@@ -11,6 +11,7 @@ from threading import Event
 from typing import Any
 
 from ..base import AIProvider, RelevanceResult
+from ..cli_status import find_executable
 from ..models import RECOMMENDED_MODELS
 from ...domain import ContentItem, Hospital
 from ...providers import ProviderConfigurationError, ProviderRequestError, sanitize_provider_error_message
@@ -49,7 +50,7 @@ class LocalCLIProvider(AIProvider):
     def _invoke(self, prompt: str) -> str:
         if self.cancel_event.is_set():
             raise ProviderRequestError("연결 테스트가 취소되었습니다.")
-        executable = shutil.which(self.cli)
+        executable = find_executable(self.cli)
         if not executable:
             raise ProviderRequestError(f"{self.cli} CLI를 찾을 수 없습니다. 먼저 설치하고 로그인해 주세요.")
 
