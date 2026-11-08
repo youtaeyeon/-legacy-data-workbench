@@ -6,7 +6,9 @@ class ProviderConfigurationError(ValueError):
 
 
 class ProviderRequestError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, attempts: list[dict] | None = None):
+        super().__init__(message)
+        self.attempts = attempts or []
 
 
 def _redact_openai_key_error(message: str) -> str:

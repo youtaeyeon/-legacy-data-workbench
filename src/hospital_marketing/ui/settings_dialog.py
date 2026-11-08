@@ -44,6 +44,25 @@ def _local_error_time(utc_timestamp: str) -> str:
     return timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
+def _format_connection_attempts(attempts: list[dict[str, Any]]) -> str:
+    if not attempts:
+        return "시도 정보 없음"
+    formatted = []
+    for index, attempt in enumerate(attempts, start=1):
+        elapsed = attempt.get("elapsed_seconds")
+        elapsed_text = f"{elapsed}초" if elapsed is not None else "시간 미상"
+        if attempt.get("timeout"):
+            outcome = "시간 초과"
+        elif attempt.get("status_code") is not None:
+            outcome = f"HTTP {attempt['status_code']}"
+        else:
+            outcome = "연결 실패"
+        if attempt.get("status"):
+            outcome += f" {attempt['status']}"
+        formatted.append(f"{index}차: {outcome} ({elapsed_text})")
+    return " / ".join(formatted)
+
+
 class _CancellationAwareHttpClient:
     def __init__(self, client: Any, cancel_event: Event):
         self._client = client
@@ -93,7 +112,7 @@ def _send_connection_test(
 
 class _ConnectionTestSignals(QtCore.QObject):
     retry = QtCore.Signal(int, int, float)
-    finished = QtCore.Signal(bool, str)
+    finished = QtCore.Signal(bool, str, object)
 
 
 class _ConnectionTestWorker(QtCore.QRunnable):
@@ -120,7 +139,7 @@ class _ConnectionTestWorker(QtCore.QRunnable):
     @QtCore.Slot()
     def run(self) -> None:
         if self.cancel_event.is_set():
-            self.signals.finished.emit(False, "")
+            self.signals.finished.emit(False, "", [])
             return
 
         def cancellable_sleep(delay: float) -> None:
@@ -149,11 +168,14 @@ class _ConnectionTestWorker(QtCore.QRunnable):
                 self.cancel_event,
             )
         except (ProviderConfigurationError, ProviderRequestError) as exc:
-            self.signals.finished.emit(False, _sanitize_connection_error(str(exc), self.api_key))
+            attempts = getattr(exc, "attempts", [])
+            self.signals.finished.emit(
+                False, _sanitize_connection_error(str(exc), self.api_key), attempts
+            )
         except Exception:
-            self.signals.finished.emit(False, "연결 테스트 중 오류가 발생했습니다. 설정과 네트워크를 확인하세요.")
+            self.signals.finished.emit(False, "연결 테스트 중 오류가 발생했습니다. 설정과 네트워크를 확인하세요.", [])
         else:
-            self.signals.finished.emit(True, "연결 성공: 선택한 제공자와 모델을 사용할 수 있습니다.")
+            self.signals.finished.emit(True, "연결 성공: 선택한 제공자와 모델을 사용할 수 있습니다.", [])
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -178,7 +200,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self._connection_model_id = ""
         self._connection_api_key = ""
         self._connection_started_at: float | None = None
-        self._pending_connection_result: tuple[bool, str] | None = None
+        self._pending_connection_result: tuple[bool, str, list[dict[str, Any]]] | None = None
         self._last_connection_error: dict[str, Any] | None = None
         self._connection_error_log_path: Path | None = None
         self._closing = False
@@ -472,14 +494,14 @@ class SettingsDialog(QtWidgets.QDialog):
         self.cancel_connection_button.setEnabled(False)
         self.connection_status_label.setText("연결 테스트 취소 중… 완료되는 요청 결과는 무시합니다.")
 
-    def _on_connection_finished(self, succeeded: bool, message: str) -> None:
+    def _on_connection_finished(self, succeeded: bool, message: str, attempts: list[dict[str, Any]]) -> None:
         if self._closing:
             self._connection_worker = None
             self._connection_cancel_event = None
             self._connection_api_key = ""
             self._pending_connection_result = None
             return
-        self._pending_connection_result = (succeeded, message)
+        self._pending_connection_result = (succeeded, message, attempts)
         elapsed = (
             time.monotonic() - self._connection_started_at
             if self._connection_started_at is not None
@@ -502,7 +524,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self._connection_started_at = None
             self._pending_connection_result = None
             return
-        succeeded, message = result
+        succeeded, message, attempts = result
         self._pending_connection_result = None
         cancel_event = self._connection_cancel_event
         cancelled = cancel_event is not None and cancel_event.is_set()
@@ -518,21 +540,35 @@ class SettingsDialog(QtWidgets.QDialog):
             self.connection_status_label.setText(message)
         else:
             safe_message = _sanitize_connection_error(message, api_key)
-            self.connection_status_label.setText(f"연결 실패: {safe_message}")
-            self._record_connection_failure(safe_message)
+            attempt_summary = _format_connection_attempts(attempts)
+            self.connection_status_label.setText(f"연결 실패: {attempt_summary} · {safe_message}")
+            self._record_connection_failure(safe_message, attempts, api_key)
 
     def _get_connection_error_log_path(self) -> Path:
         settings = self.settings_store.load()
         base_dir = settings.target_dir or self.settings_store.path.parent
         return base_dir / "reports" / CONNECTION_ERROR_LOG_NAME
 
-    def _record_connection_failure(self, message: str) -> None:
+    def _record_connection_failure(
+        self, message: str, attempts: list[dict[str, Any]], api_key: str
+    ) -> None:
+        safe_attempts = [
+            {
+                "status_code": attempt.get("status_code"),
+                "status": sanitize_provider_error_message(str(attempt["status"]), api_key)[:100]
+                if attempt.get("status") else None,
+                "timeout": bool(attempt.get("timeout", False)),
+                "elapsed_seconds": attempt.get("elapsed_seconds"),
+            }
+            for attempt in attempts
+        ]
         record = {
             "occurred_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "provider_id": self._connection_provider_id,
             "model_id": self._connection_model_id,
             "status_code": _provider_status_code(message),
             "message": message,
+            "attempts": safe_attempts,
         }
         self._last_connection_error = record
         try:
@@ -564,6 +600,7 @@ class SettingsDialog(QtWidgets.QDialog):
             f"제공자: {record['provider_id']}\n"
             f"모델: {record['model_id']}\n"
             f"상태: {status_text}\n"
+            f"시도: {_format_connection_attempts(record.get('attempts', []))}\n"
             f"오류: {record['message']}"
             f"{log_text}"
         )

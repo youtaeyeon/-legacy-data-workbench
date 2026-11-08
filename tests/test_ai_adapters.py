@@ -542,3 +542,23 @@ def test_remote_providers_turn_extracted_source_text_into_markdown(provider_type
     assert "병원 정보와 표 데이터" in request
     assert "새로운 사실을 만들지" in request
     assert "secret-test-key" not in request
+
+
+def test_final_timeout_error_preserves_prior_http_failure_attempts():
+    client = SequenceHttpClient([
+        _http_response(503, payload={"error": {"status": "UNAVAILABLE"}}),
+        httpx.ReadTimeout("secret-test-key"),
+        httpx.ReadTimeout("secret-test-key"),
+    ])
+    provider = OpenAIProvider(
+        api_key="secret-test-key", model="test-model", http_client=client,
+        sleep_fn=lambda _delay: None, jitter_fn=lambda _maximum: 0,
+    )
+
+    with pytest.raises(ProviderRequestError) as exc:
+        provider.test_connection()
+
+    assert exc.value.attempts[0]["status_code"] == 503
+    assert exc.value.attempts[0]["status"] == "UNAVAILABLE"
+    assert exc.value.attempts[1]["timeout"] is True
+    assert "secret-test-key" not in str(exc.value)
