@@ -22,10 +22,12 @@ from ..documents.size_warnings import (
     format_large_source_file_prompt,
 )
 from ..settings import AppSettings, SettingsStore
+from ..repository import Repository
 from ..version import APP_VERSION
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
 from .product_keywords_dialog import ProductKeywordsDialog
+from .channel_candidates_dialog import ChannelCandidatesDialog
 
 PATH_GUIDE_BUTTON_SIZE = 20
 PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
@@ -155,6 +157,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.export_dashboard_button.setToolTip("내보낸 파일에는 병원 정보가 포함될 수 있으므로 외부 공유 전 내용을 확인하세요.")
         self.export_dashboard_button.clicked.connect(self._export_dashboard)
         actions.addWidget(self.export_dashboard_button)
+        self.channel_candidates_button = QtWidgets.QPushButton("온라인 채널 후보")
+        self.channel_candidates_button.setObjectName("channel_candidates_button")
+        self.channel_candidates_button.clicked.connect(self._open_channel_candidates)
+        actions.addWidget(self.channel_candidates_button)
         layout.addWidget(self.actions_group)
 
         self.status_label = QtWidgets.QLabel("Source와 Target을 정한 뒤 실행하세요.")
@@ -165,6 +171,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
         if settings.target_dir:
             self._set_dashboard_path(settings.target_dir / "dashboard" / "index.html")
+
+    def _open_channel_candidates(self, hospital_ids: list[str] | None = None) -> None:
+        from ..ai.adapters.local_cli_provider import LocalCLIProvider
+
+        settings = self.settings_store.load()
+        target = settings.target_dir
+        if target is None or settings.provider_id != "local-cli" or settings.model_id != "claude":
+            QtWidgets.QMessageBox.information(
+                self, "채널 찾기 미지원", "채널 찾기는 구독 연동 Claude CLI의 웹 검색만 지원합니다. AI 설정에서 Claude CLI를 선택해 주세요."
+            )
+            return
+        repository = Repository(target / "data" / "app.db")
+        repository.initialize()
+        hospitals = repository.list_hospitals()
+        if hospital_ids is not None:
+            hospitals = [hospital for hospital in hospitals if hospital.hospital_id in hospital_ids]
+        if not hospitals:
+            repository.close()
+            return
+        try:
+            dialog = ChannelCandidatesDialog(
+                repository, LocalCLIProvider("claude"), hospitals, target,
+                batch=hospital_ids is not None, parent=self,
+            )
+            dialog.exec()
+        finally:
+            repository.close()
 
     def _choose_source(self) -> None:
         current = self.source_path_edit.text().strip()
@@ -275,6 +308,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status_label.setText("큰 원본 파일 경고로 처리를 취소했습니다.")
             return
         self.settings_store.save(updated)
+        existing_hospital_ids: set[str] = set()
+        try:
+            before = Repository(target_dir / "data" / "app.db")
+            before.initialize()
+            existing_hospital_ids = {hospital.hospital_id for hospital in before.list_hospitals()}
+            before.close()
+        except Exception:
+            existing_hospital_ids = set()
         self.run_button.setEnabled(False)
         self.status_label.setText("선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다.")
         QtWidgets.QApplication.processEvents()
@@ -310,6 +351,21 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
+            new_hospital_ids: list[str] = []
+            if report.inserted_count and updated.provider_id == "local-cli" and updated.model_id == "claude":
+                current = Repository(target_dir / "data" / "app.db")
+                current.initialize()
+                new_hospital_ids = [hospital.hospital_id for hospital in current.list_hospitals()
+                                    if hospital.hospital_id not in existing_hospital_ids]
+                current.close()
+            if new_hospital_ids:
+                answer = QtWidgets.QMessageBox.question(
+                    self, "신규 병원 온라인 채널", f"신규 병원 {len(new_hospital_ids)}곳의 채널을 찾을까요?",
+                    QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                    QtWidgets.QMessageBox.StandardButton.No,
+                )
+                if answer == QtWidgets.QMessageBox.StandardButton.Yes:
+                    self._open_channel_candidates(new_hospital_ids)
         except (ProviderConfigurationError, ProviderRequestError) as exc:
             safe_message = sanitize_provider_error_message(str(exc))
             self.status_label.setText(f"AI 처리 실패: {safe_message} 목업 모드로 다시 실행할 수 있습니다.")
