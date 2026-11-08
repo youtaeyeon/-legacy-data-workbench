@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..ai import cli_status
 from ..ai.models import RECOMMENDED_MODELS, model_id_error
 from ..ai.registry import ProviderRegistry
 from ..credentials import CredentialStore, CredentialStoreError
@@ -179,6 +180,26 @@ class _ConnectionTestWorker(QtCore.QRunnable):
             self.signals.finished.emit(True, "연결 성공: 선택한 제공자와 모델을 사용할 수 있습니다.", [])
 
 
+class _CLIStatusSignals(QtCore.QObject):
+    finished = QtCore.Signal(object, object)
+
+
+class _CLIStatusWorker(QtCore.QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = _CLIStatusSignals()
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            statuses = cli_status.check_all_cli_statuses()
+            node_statuses = cli_status.check_node_tool_status()
+        except Exception:
+            statuses = {}
+            node_statuses = {}
+        self.signals.finished.emit(statuses, node_statuses)
+
+
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(
         self,
@@ -204,6 +225,9 @@ class SettingsDialog(QtWidgets.QDialog):
         self._pending_connection_result: tuple[bool, str, list[dict[str, Any]]] | None = None
         self._last_connection_error: dict[str, Any] | None = None
         self._connection_error_log_path: Path | None = None
+        self._cli_statuses: dict[str, cli_status.CLIStatus] = {}
+        self._node_statuses: dict[str, str | None] = {}
+        self._cli_status_worker: _CLIStatusWorker | None = None
         self._closing = False
         settings = settings_store.load()
         self.setWindowTitle("AI 제공자 설정")
@@ -221,6 +245,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.model_label = QtWidgets.QLabel("모델 ID (직접 입력 가능)")
         self.model_combo.setObjectName("model_combo")
         self.model_combo.setEditable(True)
+        self.model_combo.currentTextChanged.connect(self._update_cli_status_label)
         self.model_edit = self.model_combo.lineEdit()
         if self.model_edit is not None:
             self.model_edit.setObjectName("model_edit")
@@ -228,6 +253,14 @@ class SettingsDialog(QtWidgets.QDialog):
         self._populate_model_choices(settings.provider_id, settings.model_id, preserve_custom=True)
         self.provider_combo.currentTextChanged.connect(self._provider_changed)
         form.addRow(self.model_label, self.model_combo)
+
+        self.cli_install_status_label = QtWidgets.QLabel("CLI 설치 상태를 확인해 주세요.")
+        self.cli_install_status_label.setObjectName("cli_install_status_label")
+        self.cli_install_status_label.setWordWrap(True)
+        form.addRow("선택 CLI 상태", self.cli_install_status_label)
+        self.cli_node_status_label = QtWidgets.QLabel("Node.js / npm: 확인 전")
+        self.cli_node_status_label.setObjectName("cli_node_status_label")
+        form.addRow("CLI 설치 요건", self.cli_node_status_label)
 
         self.api_key_edit = QtWidgets.QLineEdit()
         self.api_key_edit.setObjectName("api_key_edit")
@@ -258,6 +291,10 @@ class SettingsDialog(QtWidgets.QDialog):
         self.test_connection_button.setObjectName("test_connection_button")
         self.test_connection_button.clicked.connect(self._test_connection)
         connection_buttons.addWidget(self.test_connection_button)
+        self.check_cli_install_button = QtWidgets.QPushButton("CLI 설치 확인")
+        self.check_cli_install_button.setObjectName("check_cli_install_button")
+        self.check_cli_install_button.clicked.connect(self._refresh_cli_status)
+        connection_buttons.addWidget(self.check_cli_install_button)
         self.cancel_connection_button = QtWidgets.QPushButton("테스트 취소")
         self.cancel_connection_button.setObjectName("cancel_connection_button")
         self.cancel_connection_button.setVisible(False)
@@ -313,6 +350,8 @@ class SettingsDialog(QtWidgets.QDialog):
         buttons.addWidget(self.dialog_cancel_button)
         layout.addLayout(buttons)
         self._refresh_key_status()
+        if settings.provider_id == "local-cli":
+            self._refresh_cli_status()
 
     def _populate_model_choices(
         self,
@@ -370,6 +409,76 @@ class SettingsDialog(QtWidgets.QDialog):
         if provider_id == "local-cli":
             self.mock_mode_checkbox.setChecked(False)
         self._refresh_key_status()
+        if provider_id == "local-cli":
+            self._refresh_cli_status()
+
+    def _refresh_cli_status(self) -> None:
+        if self._cli_status_worker is not None:
+            return
+        self.cli_install_status_label.setText("CLI 설치 상태 확인 중…")
+        self.cli_node_status_label.setText("Node.js / npm 확인 중…")
+        worker = _CLIStatusWorker()
+        worker.signals.finished.connect(self._on_cli_status_finished)
+        self._cli_status_worker = worker
+        self.check_cli_install_button.setEnabled(False)
+        QtCore.QThreadPool.globalInstance().start(worker)
+
+    def _on_cli_status_finished(self, statuses: dict, node_statuses: dict) -> None:
+        self._cli_status_worker = None
+        self._cli_statuses = statuses
+        self._node_statuses = node_statuses
+        self.check_cli_install_button.setEnabled(True)
+        self._update_cli_status_label()
+        node = "설치됨" if node_statuses.get("node") else "없음"
+        npm = "설치됨" if node_statuses.get("npm") else "없음"
+        self.cli_node_status_label.setText(f"Node.js {node} · npm {npm}")
+
+    def _update_cli_status_label(self, *_args) -> None:
+        selected_cli = self.model_combo.currentText()
+        status = self._cli_statuses.get(selected_cli)
+        if status is None:
+            self.cli_install_status_label.setText("CLI 설치 상태를 확인하지 못했습니다. 다시 확인해 주세요.")
+        elif status.installed:
+            version_text = status.version or ""
+            if version_text and not version_text.lower().startswith("v"):
+                version_text = f"v{version_text}"
+            version = f" {version_text}" if version_text else " (버전 확인 실패)"
+            self.cli_install_status_label.setText(f"{selected_cli}: 설치됨{version}")
+        else:
+            self.cli_install_status_label.setText(f"{selected_cli}: 설치 안 됨")
+
+    def _require_cli_installed(self) -> bool:
+        if self.provider_combo.currentText() != "local-cli":
+            return True
+        cli = self.model_combo.currentText().strip()
+        status = self._cli_statuses.get(cli)
+        if status is None:
+            message = "CLI 설치 상태를 확인 중이거나 아직 확인하지 않았습니다. ‘CLI 설치 확인’을 눌러 주세요."
+            self.message_label.setText(message)
+            self.connection_status_label.setText(message)
+            return False
+        if status.installed:
+            return True
+        self._show_cli_install_guide(cli)
+        return False
+
+    def _show_cli_install_guide(self, cli: str) -> None:
+        commands = {
+            "claude": "Windows PowerShell:\nirm https://claude.ai/install.ps1 | iex",
+            "codex": "Node.js 설치 후:\nnpm install -g @openai/codex",
+            "gemini": "Node.js 설치 후:\nnpm install -g @google/gemini-cli",
+        }
+        message = (
+            f"{cli} CLI가 설치되어 있지 않습니다.\n\n"
+            "codex와 gemini는 먼저 Node.js LTS를 설치하고 npm이 동작하는지 확인하세요.\n"
+            f"{commands[cli]}\n\n"
+            "설치 후 터미널에서 해당 CLI를 한 번 실행해 로그인하세요.\n\n"
+            f"공식 문서: {cli_status.CLI_INSTALL_DOCS[cli]}\n"
+            "Node.js: https://nodejs.org/en/download/"
+        )
+        self.message_label.setText(message)
+        self.connection_status_label.setText(f"설치 필요: {cli}")
+        QtWidgets.QMessageBox.warning(self, "CLI 설치 필요", message)
 
     def _refresh_key_status(self) -> None:
         if self.provider_combo.currentText() == "local-cli":
@@ -407,6 +516,8 @@ class SettingsDialog(QtWidgets.QDialog):
         if self._connection_worker is not None:
             return
         provider_id = self.provider_combo.currentText()
+        if not self._require_cli_installed():
+            return
         if provider_id == "mock":
             message = "목업 모드는 외부 AI API에 연결하지 않습니다. 실제 연결을 테스트하려면 제공자를 선택하세요."
             self.message_label.setText(message)
@@ -621,6 +732,8 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def _save(self) -> None:
         provider_id = self.provider_combo.currentText()
+        if not self._require_cli_installed():
+            return
         model_id = self.model_combo.currentText().strip()
         validation_error = model_id_error(provider_id, model_id)
         if validation_error:
