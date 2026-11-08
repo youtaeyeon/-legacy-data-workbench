@@ -31,6 +31,7 @@ def test_cli_status_reports_first_version_line_and_safe_command(monkeypatch, cli
 
 def test_cli_status_reports_missing_executable(monkeypatch):
     monkeypatch.setattr(cli_status.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(cli_status, "_known_windows_paths", lambda _cli: ())
 
     status = cli_status.check_cli_status("claude")
 

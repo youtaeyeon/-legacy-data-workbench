@@ -116,6 +116,7 @@ def test_windows_cmd_receives_untrusted_prompt_only_via_stdin(
 
 def test_missing_cli_timeout_nonzero_and_invalid_claude_json_are_translated(tmp_path, monkeypatch):
     monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.shutil.which", lambda _name: None)
+    monkeypatch.setattr("hospital_marketing.ai.cli_status._known_windows_paths", lambda _cli: ())
     with pytest.raises(ProviderRequestError, match="설치"):
         LocalCLIProvider("gemini", temp_dir=tmp_path)._complete("prompt")
 
