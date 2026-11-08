@@ -439,6 +439,8 @@ def test_saved_local_cli_is_selected_and_key_controls_disabled_on_open(tmp_path,
 
 
 def test_local_cli_connection_test_runs_without_api_key_or_http_client(tmp_path, monkeypatch):
+    from hospital_marketing.ai.cli_status import CLIStatus
+
     _app()
     client = FakeHttpClient()
     commands = []
@@ -449,17 +451,113 @@ def test_local_cli_connection_test_runs_without_api_key_or_http_client(tmp_path,
 
     monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.shutil.which", lambda _name: "/bin/claude")
     monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {cli: CLIStatus(True, f"/bin/{cli}", "1.0", None) for cli in ("claude", "codex", "gemini")},
+    )
     dialog = _dialog(tmp_path, client=client)
     dialog.provider_combo.setCurrentText("local-cli")
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
     dialog.api_key_edit.setText("must-not-be-used")
     dialog.test_connection_button.click()
     _wait_for_connection()
 
-    assert len(commands) == 1
-    assert commands[0][1]["shell"] is False
+    provider_calls = [(args, kwargs) for args, kwargs in commands if "--version" not in args]
+    assert len(provider_calls) == 1
+    assert provider_calls[0][1]["shell"] is False
     assert client.calls == []
     assert "연결 성공" in dialog.connection_status_label.text()
-    assert "must-not-be-used" not in str(commands[0])
+    assert "must-not-be-used" not in str(provider_calls[0])
+
+
+def test_cli_install_check_runs_in_background_and_updates_status(tmp_path, monkeypatch):
+    from hospital_marketing.ai.cli_status import CLIStatus
+
+    _app()
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {
+            "claude": CLIStatus(True, "/tools/claude", "2.1.0", None),
+            "codex": CLIStatus(False, None, None, "codex CLI가 설치되지 않았습니다."),
+            "gemini": CLIStatus(True, "/tools/gemini", "0.4.0", None),
+        },
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_node_tool_status",
+        lambda: {"node": "/tools/node", "npm": None},
+    )
+    dialog = _dialog(tmp_path)
+    dialog.provider_combo.setCurrentText("local-cli")
+
+    assert hasattr(dialog, "check_cli_install_button")
+    dialog.check_cli_install_button.click()
+    assert "확인 중" in dialog.cli_install_status_label.text()
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+
+    assert "claude" in dialog.cli_install_status_label.text()
+    assert "설치됨 v2.1.0" in dialog.cli_install_status_label.text()
+    assert "Node.js" in dialog.cli_node_status_label.text()
+    assert "npm 없음" in dialog.cli_node_status_label.text()
+
+
+def test_missing_local_cli_blocks_save_and_shows_official_install_guide(tmp_path, monkeypatch):
+    from hospital_marketing.ai.cli_status import CLIStatus
+
+    _app()
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_cli_status",
+        lambda cli: CLIStatus(False, None, None, f"{cli} CLI가 설치되지 않았습니다."),
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {cli: CLIStatus(False, None, None, f"{cli} CLI가 설치되지 않았습니다.") for cli in ("claude", "codex", "gemini")},
+    )
+    messages = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+    dialog = _dialog(tmp_path)
+    dialog.provider_combo.setCurrentText("local-cli")
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+    dialog.model_combo.setCurrentText("codex")
+
+    dialog.save_button.click()
+
+    assert dialog.settings_store.load().provider_id == "mock"
+    assert messages
+    assert "npm install -g @openai/codex" in messages[0][1]
+    assert "Node.js" in messages[0][1]
+    assert "설치 후 터미널에서 해당 CLI를 한 번 실행해 로그인하세요" in messages[0][1]
+    assert "developers.openai.com/codex/cli" in messages[0][1]
+
+
+def test_missing_local_cli_blocks_connection_test(tmp_path, monkeypatch):
+    from hospital_marketing.ai.cli_status import CLIStatus
+
+    _app()
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {cli: CLIStatus(False, None, None, "not installed") for cli in ("claude", "codex", "gemini")},
+    )
+    messages = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda _parent, title, text: messages.append((title, text)),
+    )
+    dialog = _dialog(tmp_path)
+    dialog.provider_combo.setCurrentText("local-cli")
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+    dialog.test_connection_button.click()
+
+    assert messages and "설치되어 있지 않습니다" in messages[0][1]
+    assert "설치 후 터미널에서 해당 CLI를 한 번 실행해 로그인하세요" in messages[0][1]
 
 
 def test_key_status_shows_presence_without_revealing_saved_key(tmp_path):
