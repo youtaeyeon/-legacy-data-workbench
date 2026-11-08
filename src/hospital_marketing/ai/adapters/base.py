@@ -169,7 +169,9 @@ class RemoteAIProvider(AIProvider, ABC):
     def _post_with_retries(self, prompt: str) -> Any:
         http_retries = 0
         transport_retries = 0
+        attempts = []
         while True:
+            started_at = time.monotonic()
             try:
                 response = self._post(prompt)
                 response.raise_for_status()
@@ -177,6 +179,19 @@ class RemoteAIProvider(AIProvider, ABC):
             except httpx.HTTPStatusError as exc:
                 response = exc.response
                 status_code = response.status_code
+                try:
+                    body = response.json()
+                    error = body.get("error", {}) if isinstance(body, dict) else {}
+                    provider_status = error.get("status") if isinstance(error, dict) else None
+                except (ValueError, TypeError):
+                    provider_status = None
+                attempts.append({
+                    "status_code": status_code,
+                    "status": sanitize_provider_error_message(str(provider_status), self._api_key)[:100]
+                    if provider_status else None,
+                    "timeout": False,
+                    "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                })
                 retry_after = (
                     self._retry_after_seconds(response.headers.get("Retry-After"))
                     if status_code == 429
@@ -189,8 +204,16 @@ class RemoteAIProvider(AIProvider, ABC):
                         self._notify_retry(http_retries, MAX_HTTP_RETRIES, delay)
                         self._sleep_fn(delay)
                         continue
-                raise ProviderRequestError(self._http_error_message(response, http_retries, prompt)) from None
+                raise ProviderRequestError(
+                    self._http_error_message(response, http_retries, prompt), attempts=attempts
+                ) from None
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                attempts.append({
+                    "status_code": None,
+                    "status": None,
+                    "timeout": isinstance(exc, httpx.TimeoutException),
+                    "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                })
                 if transport_retries < MAX_TRANSPORT_RETRIES:
                     transport_retries += 1
                     delay = self._backoff_delay(transport_retries)
@@ -201,7 +224,7 @@ class RemoteAIProvider(AIProvider, ABC):
                     message = "AI 제공자 요청 시간이 초과됐습니다. 한 차례 재시도했지만 실패했습니다. 네트워크 상태를 확인해 주세요."
                 else:
                     message = "AI 제공자에 연결할 수 없습니다. 한 차례 재시도했지만 실패했습니다. 네트워크 또는 제공자 상태를 확인하세요."
-                raise ProviderRequestError(message) from None
+                raise ProviderRequestError(message, attempts=attempts) from None
 
     @abstractmethod
     def _post(self, prompt: str):
