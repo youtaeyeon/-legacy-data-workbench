@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -98,12 +99,22 @@ class ChannelDiscoveryService:
 def parse_candidates(response: str) -> list[ChannelCandidate]:
     try:
         payload = response.strip()
-        if payload.startswith("```") and payload.endswith("```"):
-            lines = payload.splitlines()
-            if len(lines) < 3:
-                raise ValueError
-            payload = "\n".join(lines[1:-1]).strip()
-        data = json.loads(payload)
+        fenced_json = re.search(r"```(?:json)?\s*(.*?)\s*(?:```|$)", payload, re.DOTALL | re.IGNORECASE)
+        if fenced_json:
+            payload = fenced_json.group(1)
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            for start, char in enumerate(payload):
+                if char == "{":
+                    try:
+                        data, _ = decoder.raw_decode(payload[start:])
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            else:
+                raise
         rows = data["channels"]
         if not isinstance(rows, list):
             raise TypeError
