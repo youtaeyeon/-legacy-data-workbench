@@ -438,6 +438,8 @@ def test_subscription_defaults_and_api_options_start_collapsed(tmp_path):
     assert not dialog.api_options_toggle.isChecked()
     assert not dialog.api_options_panel.isVisible()
     assert dialog.api_options_toggle.text() == "API 키 사용 (선택)"
+    assert dialog.api_options_toggle.isVisibleTo(dialog)
+    assert [dialog.api_provider_combo.itemText(i) for i in range(dialog.api_provider_combo.count())] == ["openai", "anthropic", "gemini"]
     dialog.show()
     QtWidgets.QApplication.processEvents()
     assert dialog.model_combo.mapTo(dialog, dialog.model_combo.rect().bottomLeft()).y() < (
@@ -458,6 +460,9 @@ def test_saved_api_provider_opens_api_options_and_can_switch_to_subscription_cli
     assert dialog.api_options_panel.isVisibleTo(dialog)
     assert dialog.provider_combo.currentText() == "gemini"
     assert dialog.api_key_edit.isVisibleTo(dialog)
+    assert dialog.api_provider_combo.currentText() == "gemini"
+    assert dialog.api_provider_label.text() == "선택된 API 제공자: gemini"
+    assert dialog.model_combo.isVisibleTo(dialog)
 
     dialog.provider_combo.setCurrentText("local-cli")
     dialog.model_combo.setCurrentText("claude")

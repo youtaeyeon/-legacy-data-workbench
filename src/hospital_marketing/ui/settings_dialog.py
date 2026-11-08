@@ -250,7 +250,17 @@ class SettingsDialog(QtWidgets.QDialog):
         self.subscription_message.setWordWrap(True)
         layout.addWidget(self.subscription_message)
 
+        self.connection_mode_combo = QtWidgets.QComboBox()
+        self.connection_mode_combo.addItem("구독 계정", "local-cli")
+        self.connection_mode_combo.addItem("API 키", "api")
+        self.connection_mode_combo.addItem("목업", "mock")
+        self.connection_mode_combo.setObjectName("connection_mode_combo")
+        initial_mode = "local-cli" if settings.provider_id == "local-cli" else "mock" if settings.provider_id == "mock" else "api"
+        self.connection_mode_combo.setCurrentIndex(self.connection_mode_combo.findData(initial_mode))
+        layout.addWidget(self.connection_mode_combo)
+
         form = QtWidgets.QFormLayout()
+        self._settings_form = form
         self.model_combo = QtWidgets.QComboBox()
         self.model_label = QtWidgets.QLabel("모델 ID (직접 입력 가능)")
         self.model_combo.setObjectName("model_combo")
@@ -279,7 +289,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.provider_combo.setCurrentText(settings.provider_id)
         self.provider_combo.setObjectName("provider_combo")
         self.provider_combo.currentTextChanged.connect(self._provider_changed)
-        form.addRow("연결 방식", self.provider_combo)
+        self.provider_combo.hide()
         layout.addLayout(form)
 
         self.api_options_toggle = QtWidgets.QToolButton()
@@ -292,10 +302,14 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(self.api_options_toggle)
         self.api_options_panel = QtWidgets.QWidget()
         self.api_options_panel.setObjectName("api_options_panel")
-        self.api_options_panel.setVisible(settings.provider_id not in ("local-cli", "mock"))
-        self.api_options_toggle.setChecked(settings.provider_id not in ("local-cli", "mock"))
         api_form = QtWidgets.QFormLayout(self.api_options_panel)
-        self.api_provider_label = QtWidgets.QLabel("선택된 API 제공자: ")
+        self._api_form = api_form
+        self.api_provider_combo = QtWidgets.QComboBox()
+        self.api_provider_combo.addItems(["openai", "anthropic", "gemini"])
+        self.api_provider_combo.setCurrentText(settings.provider_id if settings.provider_id in ("openai", "anthropic", "gemini") else "openai")
+        self.api_provider_combo.currentTextChanged.connect(self._select_api_provider)
+        api_form.addRow("API 제공자", self.api_provider_combo)
+        self.api_provider_label = QtWidgets.QLabel(f"선택된 API 제공자: {self.api_provider_combo.currentText()}")
         api_form.addRow(self.api_provider_label)
 
         self.api_key_edit = QtWidgets.QLineEdit()
@@ -303,8 +317,16 @@ class SettingsDialog(QtWidgets.QDialog):
         self.api_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.api_key_edit.setPlaceholderText("키는 설정 파일에 저장되지 않습니다")
         api_form.addRow("API 키", self.api_key_edit)
+        self.key_status_label = QtWidgets.QLabel()
+        self.key_status_label.setObjectName("key_status_label")
+        api_form.addRow("저장된 키", self.key_status_label)
         layout.addWidget(self.api_options_panel)
         self.api_options_toggle.toggled.connect(self._toggle_api_options)
+        self.api_options_toggle.setVisible(True)
+        self.connection_mode_combo.currentIndexChanged.connect(self._connection_mode_changed)
+        if initial_mode == "api":
+            self.api_options_toggle.setChecked(True)
+            self.provider_combo.setCurrentText(self.api_provider_combo.currentText())
         self._set_local_cli_controls(settings.provider_id == "local-cli")
 
         self.mock_mode_checkbox = QtWidgets.QCheckBox("목업 모드 (외부 AI 호출 안 함)")
@@ -314,10 +336,8 @@ class SettingsDialog(QtWidgets.QDialog):
             self.mock_mode_checkbox.setChecked(False)
             self.mock_mode_checkbox.setEnabled(False)
         form.addRow("과제 테스트", self.mock_mode_checkbox)
-
-        self.key_status_label = QtWidgets.QLabel()
-        self.key_status_label.setObjectName("key_status_label")
-        form.addRow("저장된 키", self.key_status_label)
+        self._connection_mode_changed(self.connection_mode_combo.currentIndex())
+        self._toggle_api_options(self.api_options_toggle.isChecked())
         self.message_label = QtWidgets.QLabel("API 키는 OS 자격 증명 저장소에 보관됩니다.")
         self.message_label.setWordWrap(True)
         layout.addWidget(self.message_label)
@@ -467,14 +487,43 @@ class SettingsDialog(QtWidgets.QDialog):
         self._refresh_key_status()
         if provider_id == "local-cli":
             self._refresh_cli_status()
-        self.api_options_toggle.setVisible(provider_id not in ("local-cli", "mock"))
-        self.api_options_panel.setVisible(
-            provider_id not in ("local-cli", "mock") and self.api_options_toggle.isChecked()
-        )
-        self.api_provider_label.setText(f"선택된 API 제공자: {provider_id}")
+        if provider_id in ("openai", "anthropic", "gemini"):
+            self.api_provider_combo.setCurrentText(provider_id)
+            self.api_provider_label.setText(f"선택된 API 제공자: {provider_id}")
+
+    def _select_api_provider(self, provider_id: str) -> None:
+        if self.provider_combo.currentText() != provider_id:
+            self.provider_combo.setCurrentText(provider_id)
+
+    def _connection_mode_changed(self, _index: int) -> None:
+        mode = self.connection_mode_combo.currentData()
+        provider_id = mode if mode in ("local-cli", "mock") else self.api_provider_combo.currentText()
+        if self.provider_combo.currentText() != provider_id:
+            self.provider_combo.setCurrentText(provider_id)
+        self.mock_mode_checkbox.setVisible(mode == "mock")
+        self.mock_mode_checkbox.setEnabled(mode == "mock")
+        self.mock_mode_checkbox.setChecked(mode == "mock")
+        self.api_options_toggle.setChecked(mode == "api" and self.api_options_toggle.isChecked())
+        self.api_options_panel.setVisible(mode == "api" and self.api_options_toggle.isChecked())
+        self.cli_install_status_label.setVisible(mode == "local-cli")
+        self.cli_install_status_title.setVisible(mode == "local-cli")
+        self.cli_node_status_label.setVisible(mode == "local-cli")
+        self.cli_node_status_title.setVisible(mode == "local-cli")
+        self.model_label.setVisible(mode in ("local-cli", "api"))
+        self.model_combo.setVisible(mode in ("local-cli", "api"))
+        if mode == "api" and self.model_combo.parentWidget() is not self.api_options_panel:
+            self._settings_form.removeWidget(self.model_label)
+            self._settings_form.removeWidget(self.model_combo)
+            self._api_form.insertRow(0, self.model_label, self.model_combo)
+        elif mode != "api" and self.model_combo.parentWidget() is self.api_options_panel:
+            self._api_form.removeWidget(self.model_label)
+            self._api_form.removeWidget(self.model_combo)
+            self._settings_form.insertRow(0, self.model_label, self.model_combo)
 
     def _toggle_api_options(self, expanded: bool) -> None:
-        self.api_options_panel.setVisible(expanded)
+        self.api_options_panel.setVisible(
+            expanded and self.connection_mode_combo.currentData() == "api"
+        )
         self.api_options_toggle.setArrowType(
             QtCore.Qt.ArrowType.DownArrow if expanded else QtCore.Qt.ArrowType.RightArrow
         )
