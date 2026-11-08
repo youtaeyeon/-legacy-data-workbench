@@ -9,8 +9,14 @@ import subprocess
 
 SUPPORTED_CLIS = ("claude", "codex", "gemini")
 VERSION_TIMEOUT_SECONDS = 10
+_CLI_INSTALL_COMMANDS = {
+    "claude": "irm https://claude.ai/install.ps1 | iex",
+    "codex": "npm.cmd install -g @openai/codex",
+    "gemini": "npm.cmd install -g @google/gemini-cli",
+}
+_CLI_LOGIN_COMMANDS = {"claude": "claude", "codex": "codex login", "gemini": "gemini"}
 CLI_INSTALL_DOCS = {
-    "claude": "https://code.claude.com/docs/en/quickstart",
+    "claude": "https://code.claude.com/docs/en/setup",
     "codex": "https://developers.openai.com/codex/cli/",
     "gemini": "https://geminicli.com/docs/get-started/installation/",
 }
@@ -91,3 +97,43 @@ def check_all_cli_statuses() -> dict[str, CLIStatus]:
 
 def check_node_tool_status() -> dict[str, str | None]:
     return {name: shutil.which(name) for name in ("node", "npm")}
+
+
+def cli_install_command(cli: str, *, node_available: bool = True) -> str:
+    if cli not in _CLI_INSTALL_COMMANDS:
+        raise ValueError(f"지원하지 않는 CLI입니다: {cli}")
+    command = _CLI_INSTALL_COMMANDS[cli]
+    if cli == "claude":
+        return command
+    if node_available:
+        return command
+    return (
+        "if (-not (Get-Command node -ErrorAction SilentlyContinue) -or "
+        "-not (Get-Command npm -ErrorAction SilentlyContinue)) { "
+        "winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements "
+        "--accept-package-agreements; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; "
+        "$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + "
+        "[Environment]::GetEnvironmentVariable('Path','User') }; "
+        f"{command}"
+    )
+
+
+def cli_login_command(cli: str) -> str:
+    if cli not in _CLI_LOGIN_COMMANDS:
+        raise ValueError(f"지원하지 않는 CLI입니다: {cli}")
+    return _CLI_LOGIN_COMMANDS[cli]
+
+
+def start_cli_terminal(cli: str, *, install: bool = False, node_available: bool = True):
+    if os.name != "nt":
+        raise OSError("로컬 CLI 설치 및 로그인 터미널은 Windows에서만 지원합니다.")
+    command = (
+        cli_install_command(cli, node_available=node_available)
+        if install
+        else cli_login_command(cli)
+    )
+    return subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        shell=False,
+        creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+    )

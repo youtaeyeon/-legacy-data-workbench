@@ -120,6 +120,47 @@ def test_node_tool_status_reports_missing_tools(monkeypatch):
     assert statuses == {"node": "/usr/bin/node", "npm": None}
 
 
+@pytest.mark.parametrize(
+    ("cli", "install_command", "login_command"),
+    [
+        ("claude", "irm https://claude.ai/install.ps1 | iex", "claude"),
+        ("codex", "npm.cmd install -g @openai/codex", "codex login"),
+        ("gemini", "npm.cmd install -g @google/gemini-cli", "gemini"),
+    ],
+)
+def test_cli_commands_are_fixed_and_allowlisted(cli, install_command, login_command):
+    assert cli_status.cli_install_command(cli) == install_command
+    assert cli_status.cli_login_command(cli) == login_command
+
+
+def test_cli_commands_reject_unlisted_cli():
+    with pytest.raises(ValueError, match="지원하지 않는 CLI"):
+        cli_status.cli_install_command("powershell")
+
+
+def test_install_command_installs_node_before_npm_cli():
+    command = cli_status.cli_install_command("codex", node_available=False)
+
+    assert command.index("winget install --id OpenJS.NodeJS.LTS") < command.index("npm.cmd install -g @openai/codex")
+
+
+def test_windows_terminal_launch_uses_visible_new_console_without_shell(monkeypatch):
+    monkeypatch.setattr(cli_status, "os", SimpleNamespace(name="nt"))
+    calls = []
+    monkeypatch.setattr(
+        cli_status.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append((command, kwargs)) or "process",
+    )
+
+    process = cli_status.start_cli_terminal("gemini", install=True)
+
+    assert process == "process"
+    assert calls[0][0][:3] == ["powershell.exe", "-NoProfile", "-Command"]
+    assert calls[0][0][3] == "npm.cmd install -g @google/gemini-cli"
+    assert calls[0][1]["shell"] is False
+
+
 def test_windows_cmd_version_check_uses_comspec_without_shell(monkeypatch):
     monkeypatch.setattr(cli_status, "os", SimpleNamespace(name="nt", environ={"COMSPEC": "cmd.exe"}))
 
