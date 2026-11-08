@@ -211,6 +211,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.api_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self.api_key_edit.setPlaceholderText("키는 설정 파일에 저장되지 않습니다")
         form.addRow("API 키 (선택)", self.api_key_edit)
+        self._set_local_cli_controls(settings.provider_id == "local-cli")
 
         self.mock_mode_checkbox = QtWidgets.QCheckBox("목업 모드 (외부 AI 호출 안 함)")
         self.mock_mode_checkbox.setObjectName("mock_mode_checkbox")
@@ -276,6 +277,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
         buttons = QtWidgets.QHBoxLayout()
         self.clear_key_button = QtWidgets.QPushButton("선택 제공자 키 삭제")
+        self.clear_key_button.setEnabled(settings.provider_id != "local-cli")
         self.clear_key_button.clicked.connect(self._clear_key)
         buttons.addWidget(self.clear_key_button)
         buttons.addStretch(1)
@@ -312,20 +314,26 @@ class SettingsDialog(QtWidgets.QDialog):
                 selected_model = model_id
             else:
                 selected_model = models[0] if models else model_id.strip()
-        self.model_combo.setCurrentText(selected_model)
         self.model_combo.setEditable(not is_local_cli)
+        if is_local_cli and selected_model in models:
+            self.model_combo.setCurrentIndex(self.model_combo.findText(selected_model))
+        else:
+            self.model_combo.setCurrentText(selected_model)
         self.model_combo.blockSignals(False)
         self.model_label.setText("CLI 선택" if is_local_cli else "모델 ID (직접 입력 가능)")
-        if hasattr(self, "api_key_edit"):
-            self.api_key_edit.setEnabled(not is_local_cli)
-        if hasattr(self, "clear_key_button"):
-            self.clear_key_button.setEnabled(not is_local_cli)
+        self._set_local_cli_controls(is_local_cli)
         if hasattr(self, "message_label") and is_local_cli:
             self.message_label.setText(
                 "실험 기능 · 본인 PC에 설치·로그인한 CLI 사용 · 각 서비스 약관과 사용량 한도를 따릅니다. API 키를 사용하지 않습니다."
             )
         if hasattr(self, "key_status_label"):
             self.key_status_label.setText("사용 안 함" if is_local_cli else "")
+
+    def _set_local_cli_controls(self, is_local_cli: bool) -> None:
+        for name in ("api_key_edit", "clear_key_button"):
+            control = getattr(self, name, None)
+            if control is not None:
+                control.setEnabled(not is_local_cli)
 
     def _provider_changed(self, provider_id: str) -> None:
         self._populate_model_choices(
