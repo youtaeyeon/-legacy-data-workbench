@@ -140,6 +140,10 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
             hospital for hospital in self.hospitals if hospital.hospital_id == selected_id
         ]
         if not discovery_hospitals:
+            self.find_button.setEnabled(True)
+            self.hospital_combo.setEnabled(True)
+            self.cancel_button.setEnabled(False)
+            self.status_label.setText("검색할 병원이 없습니다.")
             return
         self.progress.setRange(0, len(discovery_hospitals))
         self.progress.setValue(0)

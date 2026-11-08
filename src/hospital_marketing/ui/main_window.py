@@ -159,7 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         actions.addWidget(self.export_dashboard_button)
         self.channel_candidates_button = QtWidgets.QPushButton("온라인 채널 후보")
         self.channel_candidates_button.setObjectName("channel_candidates_button")
-        self.channel_candidates_button.clicked.connect(self._open_channel_candidates)
+        self.channel_candidates_button.clicked.connect(lambda: self._open_channel_candidates())
         actions.addWidget(self.channel_candidates_button)
         layout.addWidget(self.actions_group)
 
