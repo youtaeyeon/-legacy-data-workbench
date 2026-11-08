@@ -423,6 +423,21 @@ def test_local_cli_settings_use_allowlisted_cli_without_api_key(tmp_path):
     assert credentials.values == {}
 
 
+@pytest.mark.parametrize("cli", ["claude", "codex", "gemini"])
+def test_saved_local_cli_is_selected_and_key_controls_disabled_on_open(tmp_path, cli):
+    _app()
+    store = SettingsStore(tmp_path / "settings.json")
+    store.save(store.load().__class__(provider_id="local-cli", model_id=cli, mock_mode=False))
+
+    dialog = SettingsDialog(store, FakeCredentials(), ProviderRegistry())
+
+    assert dialog.provider_combo.currentText() == "local-cli"
+    assert dialog.model_combo.currentText() == cli
+    assert not dialog.model_combo.isEditable()
+    assert not dialog.api_key_edit.isEnabled()
+    assert not dialog.clear_key_button.isEnabled()
+
+
 def test_local_cli_connection_test_runs_without_api_key_or_http_client(tmp_path, monkeypatch):
     _app()
     client = FakeHttpClient()
