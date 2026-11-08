@@ -51,6 +51,17 @@ CREATE TABLE IF NOT EXISTS channels (
     url TEXT NOT NULL,
     UNIQUE(hospital_id, platform, url)
 );
+CREATE TABLE IF NOT EXISTS channel_candidates (
+    id INTEGER PRIMARY KEY,
+    hospital_id TEXT NOT NULL REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    platform TEXT NOT NULL,
+    channel_name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+    UNIQUE(hospital_id, url)
+);
 CREATE TABLE IF NOT EXISTS contents (
     id INTEGER PRIMARY KEY,
     hospital_id TEXT NOT NULL REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
@@ -220,6 +231,37 @@ class Repository:
             "SELECT * FROM channels WHERE hospital_id=? ORDER BY id", (hospital_id,)
         ).fetchall()
         return [Channel(row["hospital_id"], row["platform"], row["channel_name"], row["url"]) for row in rows]
+
+    def save_channel_candidate(
+        self, hospital_id: str, platform: str, channel_name: str, url: str,
+        evidence: str, confidence: float,
+    ) -> int | None:
+        cursor = self.connection.execute(
+            """INSERT OR IGNORE INTO channel_candidates
+               (hospital_id, platform, channel_name, url, evidence, confidence, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending')""",
+            (hospital_id, platform, channel_name, url, evidence, confidence),
+        )
+        return cursor.lastrowid if cursor.rowcount else None
+
+    def list_channel_candidates(self, hospital_id: str, status: str | None = None) -> list[sqlite3.Row]:
+        if status is None:
+            rows = self.connection.execute(
+                "SELECT * FROM channel_candidates WHERE hospital_id=? ORDER BY id", (hospital_id,)
+            )
+        else:
+            rows = self.connection.execute(
+                "SELECT * FROM channel_candidates WHERE hospital_id=? AND status=? ORDER BY id",
+                (hospital_id, status),
+            )
+        return list(rows.fetchall())
+
+    def set_channel_candidate_status(self, candidate_id: int, status: str) -> bool:
+        cursor = self.connection.execute(
+            "UPDATE channel_candidates SET status=? WHERE id=? AND status='pending'",
+            (status, candidate_id),
+        )
+        return cursor.rowcount == 1
 
     def add_content(self, content: ContentItem) -> None:
         self.connection.execute(

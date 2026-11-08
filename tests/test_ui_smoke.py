@@ -84,6 +84,75 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     assert window.export_dashboard_button.isEnabled()
 
 
+def test_channel_candidates_button_opens_dialog_without_clicked_boolean(tmp_path, monkeypatch):
+    from hospital_marketing.domain import Hospital
+    import hospital_marketing.ui.main_window as main_window_module
+
+    _app()
+    target = tmp_path / "target"
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(target_dir=target, provider_id="local-cli", model_id="claude"))
+    opened = []
+
+    class FakeRepository:
+        def __init__(self, _path): pass
+        def initialize(self): pass
+        def list_hospitals(self): return [Hospital("MOCK-001", "목업 병원", "가상 지역")]
+        def close(self): pass
+
+    class FakeDialog:
+        def __init__(self, _repository, _provider, hospitals, _target, *, batch, parent):
+            opened.append((hospitals, batch))
+        def exec(self): pass
+
+    monkeypatch.setattr(main_window_module, "Repository", FakeRepository)
+    monkeypatch.setattr(main_window_module, "ChannelCandidatesDialog", FakeDialog)
+    window = MainWindow(settings_store, FakeWorkflow(target / "dashboard" / "index.html"))
+    window.channel_candidates_button.click()
+    assert len(opened) == 1
+    assert [hospital.hospital_id for hospital in opened[0][0]] == ["MOCK-001"]
+    assert opened[0][1] is False
+    window.close()
+
+
+def test_import_prompts_and_opens_channel_search_for_only_new_hospitals(tmp_path, monkeypatch):
+    from datetime import date
+    from hospital_marketing.domain import Hospital
+    import hospital_marketing.ui.main_window as main_window_module
+
+    _app()
+    target = tmp_path / "target"
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(target_dir=target, provider_id="local-cli", model_id="claude"))
+    existing = Hospital("EXISTING", "기존 병원", "가상 지역")
+    new_one = Hospital("NEW", "신규 병원", "가상 지역", date(2026, 1, 1))
+
+    class FakeRepository:
+        instances = 0
+        def __init__(self, _path): type(self).instances += 1
+        def initialize(self): pass
+        def list_hospitals(self): return [existing] if self.instances == 1 else [existing, new_one]
+        def close(self): pass
+
+    opened = []
+    class FakeDialog:
+        def __init__(self, _repository, _provider, hospitals, _target, *, batch, parent):
+            opened.append(([hospital.hospital_id for hospital in hospitals], batch))
+        def exec(self): pass
+
+    monkeypatch.setattr(main_window_module, "Repository", FakeRepository)
+    monkeypatch.setattr(main_window_module, "ChannelCandidatesDialog", FakeDialog)
+    prompts = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda _p, _t, text, *_a: prompts.append(text) or QtWidgets.QMessageBox.StandardButton.Yes)
+    window = MainWindow(settings_store, FakeWorkflow(target / "dashboard" / "index.html"))
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(target))
+    window.run_button.click()
+    assert prompts == ["신규 병원 1곳의 채널을 찾을까요?"]
+    assert opened == [(["NEW"], True)]
+    window.close()
+
+
 def test_main_window_status_redacts_masked_provider_key(tmp_path):
     _app()
     masked_token = "sk-proj-" + "*" * 3 + "abcd"
