@@ -522,6 +522,7 @@ def test_missing_local_cli_blocks_save_and_shows_official_install_guide(tmp_path
     from hospital_marketing.ai.cli_status import CLIStatus
 
     _app()
+    monkeypatch.setattr("hospital_marketing.ui.settings_dialog._is_windows", lambda: False)
     monkeypatch.setattr(
         "hospital_marketing.ui.settings_dialog.cli_status.check_cli_status",
         lambda cli: CLIStatus(False, None, None, f"{cli} CLI가 설치되지 않았습니다."),
@@ -556,6 +557,7 @@ def test_missing_local_cli_blocks_connection_test(tmp_path, monkeypatch):
     from hospital_marketing.ai.cli_status import CLIStatus
 
     _app()
+    monkeypatch.setattr("hospital_marketing.ui.settings_dialog._is_windows", lambda: False)
     monkeypatch.setattr(
         "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
         lambda: {cli: CLIStatus(False, None, None, "not installed") for cli in ("claude", "codex", "gemini")},
