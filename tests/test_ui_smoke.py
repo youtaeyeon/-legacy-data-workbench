@@ -74,7 +74,7 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
 
     window.run_button.click()
 
-    assert workflow.calls == [(source, target, "mock", "", True)]
+    assert workflow.calls == [(source, target, "local-cli", "claude", False)]
     assert settings_store.load().source_dir == source
     assert settings_store.load().target_dir == target
     assert "읽은 파일 0" in window.status_label.text()
@@ -276,7 +276,7 @@ def test_settings_dialog_saves_provider_and_key_to_separate_stores(tmp_path, mon
     settings_store = SettingsStore(tmp_path / "settings.json")
     dialog = SettingsDialog(settings_store, CredentialStore(), ProviderRegistry())
     dialog.provider_combo.setCurrentText("anthropic")
-    dialog.model_edit.setText("claude-test")
+    dialog.model_combo.setCurrentText("claude-test")
     dialog.api_key_edit.setText("secret-ui-key")
     dialog.mock_mode_checkbox.setChecked(False)
 
@@ -615,12 +615,13 @@ def test_provider_error_shows_cause_and_mock_mode_fallback(tmp_path):
     window.close()
 
 
-def test_settings_default_to_offline_mock_mode(tmp_path):
+def test_settings_default_to_subscription_cli(tmp_path):
     _app()
     dialog = SettingsDialog(SettingsStore(tmp_path / "settings.json"), CredentialStore(), ProviderRegistry())
 
-    assert dialog.mock_mode_checkbox.isChecked()
-    assert dialog.provider_combo.currentText() == "mock"
+    assert not dialog.mock_mode_checkbox.isChecked()
+    assert dialog.provider_combo.currentText() == "local-cli"
+    assert dialog.model_combo.currentText() == "claude"
 
 
 def test_disabled_primary_buttons_use_disabled_colors_and_restore_enabled_styles(tmp_path):
@@ -710,7 +711,7 @@ def test_large_source_file_in_mock_mode_runs_without_confirmation_and_shows_warn
     (source / "large.txt").write_text("x" * (LARGE_SOURCE_FILE_THRESHOLD_BYTES + 1), encoding="utf-8")
     target = tmp_path / "target"
     settings_store = SettingsStore(tmp_path / "settings.json")
-    settings_store.save(AppSettings(enabled_extensions=(".txt",)))
+    settings_store.save(AppSettings(enabled_extensions=(".txt",), provider_id="mock", model_id="", mock_mode=True))
     workflow = FakeWorkflow(target / "dashboard" / "index.html")
     window = MainWindow(settings_store, workflow)
     monkeypatch.setattr(

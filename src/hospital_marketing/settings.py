@@ -21,9 +21,9 @@ class ProductKeyword:
 class AppSettings:
     source_dir: Path | None = None
     target_dir: Path | None = None
-    provider_id: str = "mock"
-    model_id: str = ""
-    mock_mode: bool = True
+    provider_id: str = "local-cli"
+    model_id: str = "claude"
+    mock_mode: bool = False
     enabled_extensions: tuple[str, ...] = SUPPORTED_EXTENSIONS
     product_keywords: tuple[ProductKeyword, ...] = tuple(ProductKeyword(term) for term in DEFAULT_PRODUCTS)
 

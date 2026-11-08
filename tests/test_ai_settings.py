@@ -14,7 +14,7 @@ from PySide6.QtTest import QTest
 
 from hospital_marketing.ai.registry import ProviderRegistry
 from hospital_marketing.providers import ProviderRequestError
-from hospital_marketing.settings import SettingsStore
+from hospital_marketing.settings import AppSettings, SettingsStore
 from hospital_marketing.ui import settings_dialog
 from hospital_marketing.ui.settings_dialog import SettingsDialog
 
@@ -114,11 +114,14 @@ class BlockingFakeHttpClient(FakeHttpClient):
 
 
 def _dialog(tmp_path, *, client=None, credentials=None, provider_registry=None, retry_sleep_fn=None):
+    store = SettingsStore(tmp_path / "settings.json")
+    if not store.path.exists():
+        store.save(AppSettings(provider_id="mock", model_id="", mock_mode=True))
     options = {"http_client": client}
     if retry_sleep_fn is not None:
         options["retry_sleep_fn"] = retry_sleep_fn
     return SettingsDialog(
-        SettingsStore(tmp_path / "settings.json"),
+        store,
         credentials or FakeCredentials(),
         provider_registry or ProviderRegistry(),
         **options,
@@ -417,8 +420,24 @@ def test_model_selector_has_recommendations_and_accepts_direct_input(tmp_path):
         options = [dialog.model_combo.itemText(index) for index in range(dialog.model_combo.count())]
         assert options == list(expected_models)
         assert dialog.model_combo.currentText() in options
+        if provider_id == "gemini":
+            assert dialog.model_combo.currentText() == "gemini-3.5-flash-lite"
     dialog.model_edit.setText("custom-model-2026")
     assert dialog.model_combo.currentText() == "custom-model-2026"
+
+
+def test_subscription_defaults_and_api_options_start_collapsed(tmp_path):
+    _app()
+    dialog = SettingsDialog(
+        SettingsStore(tmp_path / "settings.json"), FakeCredentials(), ProviderRegistry()
+    )
+
+    assert dialog.provider_combo.currentText() == "local-cli"
+    assert dialog.model_combo.currentText() == "claude"
+    assert dialog.subscription_heading.text() == "구독 계정 연결 (권장)"
+    assert not dialog.api_options_toggle.isChecked()
+    assert not dialog.api_options_panel.isVisible()
+    assert dialog.api_options_toggle.text() == "API 키 사용 (선택)"
 
 
 def test_local_cli_settings_use_allowlisted_cli_without_api_key(tmp_path):
@@ -433,7 +452,7 @@ def test_local_cli_settings_use_allowlisted_cli_without_api_key(tmp_path):
     assert not dialog.api_key_edit.isEnabled()
     assert not dialog.mock_mode_checkbox.isEnabled()
     assert dialog.key_status_label.text() == "사용 안 함"
-    assert "실험 기능" in dialog.message_label.text()
+    assert "구독 계정 연결" in dialog.message_label.text()
     assert "약관" in dialog.message_label.text()
     assert "CLI" in dialog.message_label.text()
 

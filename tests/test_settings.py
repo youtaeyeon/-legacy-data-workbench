@@ -44,9 +44,26 @@ def test_settings_file_never_contains_api_key(tmp_path):
 
 def test_missing_or_invalid_settings_return_safe_defaults(tmp_path):
     path = tmp_path / "settings.json"
-    assert SettingsStore(path).load() == AppSettings()
+    defaults = SettingsStore(path).load()
+    assert defaults.provider_id == "local-cli"
+    assert defaults.model_id == "claude"
+    assert defaults.mock_mode is False
     path.write_text("{not-json", encoding="utf-8")
-    assert SettingsStore(path).load() == AppSettings()
+    assert SettingsStore(path).load() == defaults
+
+
+def test_existing_ai_settings_are_preserved(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        '{"provider_id":"gemini","model_id":"gemini-3.8-flash","mock_mode":false}',
+        encoding="utf-8",
+    )
+
+    settings = SettingsStore(path).load()
+
+    assert (settings.provider_id, settings.model_id, settings.mock_mode) == (
+        "gemini", "gemini-3.8-flash", False
+    )
 
 
 def test_legacy_settings_without_product_keywords_use_default_products(tmp_path):
