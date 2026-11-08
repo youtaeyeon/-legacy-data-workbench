@@ -44,7 +44,7 @@ def _local_error_time(utc_timestamp: str) -> str:
     return timestamp.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
-def _format_connection_attempts(attempts: list[dict[str, Any]]) -> str:
+def _format_connection_attempts(attempts: list[dict[str, Any]], api_key: str = "") -> str:
     if not attempts:
         return "시도 정보 없음"
     formatted = []
@@ -58,7 +58,8 @@ def _format_connection_attempts(attempts: list[dict[str, Any]]) -> str:
         else:
             outcome = "연결 실패"
         if attempt.get("status"):
-            outcome += f" {attempt['status']}"
+            safe_status = sanitize_provider_error_message(str(attempt["status"]), api_key)
+            outcome += f" {safe_status}"
         formatted.append(f"{index}차: {outcome} ({elapsed_text})")
     return " / ".join(formatted)
 
@@ -540,7 +541,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self.connection_status_label.setText(message)
         else:
             safe_message = _sanitize_connection_error(message, api_key)
-            attempt_summary = _format_connection_attempts(attempts)
+            attempt_summary = _format_connection_attempts(attempts, api_key)
             self.connection_status_label.setText(f"연결 실패: {attempt_summary} · {safe_message}")
             self._record_connection_failure(safe_message, attempts, api_key)
 

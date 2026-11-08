@@ -634,9 +634,9 @@ def test_connection_failure_logs_sanitized_details_and_opens_details_view(tmp_pa
 
         def test_connection(self):
             raise ProviderRequestError(
-                "HTTP 503 Authorization: Bearer ***",
+                f"HTTP 503 Authorization: Bearer {self.api_key}",
                 attempts=[
-                    {"status_code": 503, "status": "UNAVAILABLE", "timeout": False, "elapsed_seconds": 2.9},
+                    {"status_code": 503, "status": f"UNAVAILABLE {self.api_key}", "timeout": False, "elapsed_seconds": 2.9},
                     {"status_code": None, "status": None, "timeout": True, "elapsed_seconds": 30.0},
                 ],
             )
@@ -671,9 +671,9 @@ def test_connection_failure_logs_sanitized_details_and_opens_details_view(tmp_pa
     assert entry["model_id"] == "gpt-6-luna"
     assert entry["status_code"] == 503
     assert "HTTP 503" in entry["message"]
-    assert entry["attempts"][0]["status"] == "UNAVAILABLE"
+    assert entry["attempts"][0]["status"] == "UNAVAILABLE [REDACTED]"
     assert entry["attempts"][1]["timeout"] is True
-    assert "1차: HTTP 503 UNAVAILABLE (2.9초)" in dialog.connection_status_label.text()
+    assert "1차: HTTP 503 UNAVAILABLE [REDACTED] (2.9초)" in dialog.connection_status_label.text()
     assert "2차: 시간 초과 (30.0초)" in dialog.connection_status_label.text()
     assert fake_key not in log_path.read_text(encoding="utf-8")
 
