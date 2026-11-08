@@ -251,12 +251,6 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(self.subscription_message)
 
         form = QtWidgets.QFormLayout()
-        self.provider_combo = QtWidgets.QComboBox()
-        self.provider_combo.addItems(provider_registry.available())
-        self.provider_combo.setCurrentText(settings.provider_id)
-        self.provider_combo.setObjectName("provider_combo")
-
-
         self.model_combo = QtWidgets.QComboBox()
         self.model_label = QtWidgets.QLabel("모델 ID (직접 입력 가능)")
         self.model_combo.setObjectName("model_combo")
@@ -268,7 +262,6 @@ class SettingsDialog(QtWidgets.QDialog):
             self.model_edit.setObjectName("model_edit")
             self.model_edit.setPlaceholderText("권장 모델을 고르거나 모델 ID를 입력하세요")
         self._populate_model_choices(settings.provider_id, settings.model_id, preserve_custom=True)
-        self.provider_combo.currentTextChanged.connect(self._provider_changed)
         form.addRow(self.model_label, self.model_combo)
 
         self.cli_install_status_label = QtWidgets.QLabel("CLI 설치 상태를 확인해 주세요.")
@@ -281,6 +274,14 @@ class SettingsDialog(QtWidgets.QDialog):
         self.cli_node_status_title = QtWidgets.QLabel("CLI 설치 요건")
         form.addRow(self.cli_node_status_title, self.cli_node_status_label)
 
+        self.provider_combo = QtWidgets.QComboBox()
+        self.provider_combo.addItems(provider_registry.available())
+        self.provider_combo.setCurrentText(settings.provider_id)
+        self.provider_combo.setObjectName("provider_combo")
+        self.provider_combo.currentTextChanged.connect(self._provider_changed)
+        form.addRow("연결 방식", self.provider_combo)
+        layout.addLayout(form)
+
         self.api_options_toggle = QtWidgets.QToolButton()
         self.api_options_toggle.setText("API 키 사용 (선택)")
         self.api_options_toggle.setCheckable(True)
@@ -291,9 +292,11 @@ class SettingsDialog(QtWidgets.QDialog):
         layout.addWidget(self.api_options_toggle)
         self.api_options_panel = QtWidgets.QWidget()
         self.api_options_panel.setObjectName("api_options_panel")
-        self.api_options_panel.setVisible(False)
+        self.api_options_panel.setVisible(settings.provider_id not in ("local-cli", "mock"))
+        self.api_options_toggle.setChecked(settings.provider_id not in ("local-cli", "mock"))
         api_form = QtWidgets.QFormLayout(self.api_options_panel)
-        api_form.addRow("API 키 제공자", self.provider_combo)
+        self.api_provider_label = QtWidgets.QLabel("선택된 API 제공자: ")
+        api_form.addRow(self.api_provider_label)
 
         self.api_key_edit = QtWidgets.QLineEdit()
         self.api_key_edit.setObjectName("api_key_edit")
@@ -315,8 +318,6 @@ class SettingsDialog(QtWidgets.QDialog):
         self.key_status_label = QtWidgets.QLabel()
         self.key_status_label.setObjectName("key_status_label")
         form.addRow("저장된 키", self.key_status_label)
-        layout.addLayout(form)
-
         self.message_label = QtWidgets.QLabel("API 키는 OS 자격 증명 저장소에 보관됩니다.")
         self.message_label.setWordWrap(True)
         layout.addWidget(self.message_label)
@@ -466,6 +467,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self._refresh_key_status()
         if provider_id == "local-cli":
             self._refresh_cli_status()
+        self.api_options_toggle.setVisible(provider_id not in ("local-cli", "mock"))
+        self.api_options_panel.setVisible(
+            provider_id not in ("local-cli", "mock") and self.api_options_toggle.isChecked()
+        )
+        self.api_provider_label.setText(f"선택된 API 제공자: {provider_id}")
 
     def _toggle_api_options(self, expanded: bool) -> None:
         self.api_options_panel.setVisible(expanded)

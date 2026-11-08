@@ -438,6 +438,37 @@ def test_subscription_defaults_and_api_options_start_collapsed(tmp_path):
     assert not dialog.api_options_toggle.isChecked()
     assert not dialog.api_options_panel.isVisible()
     assert dialog.api_options_toggle.text() == "API 키 사용 (선택)"
+    dialog.show()
+    QtWidgets.QApplication.processEvents()
+    assert dialog.model_combo.mapTo(dialog, dialog.model_combo.rect().bottomLeft()).y() < (
+        dialog.api_options_toggle.mapTo(dialog, dialog.api_options_toggle.rect().topLeft()).y()
+    )
+
+
+def test_saved_api_provider_opens_api_options_and_can_switch_to_subscription_cli(tmp_path):
+    _app()
+    store = SettingsStore(tmp_path / "settings.json")
+    store.save(AppSettings(provider_id="gemini", model_id="gemini-3.8-flash", mock_mode=False))
+    dialog = SettingsDialog(store, FakeCredentials(), ProviderRegistry())
+    dialog.show()
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+
+    assert dialog.api_options_toggle.isChecked()
+    assert dialog.api_options_panel.isVisibleTo(dialog)
+    assert dialog.provider_combo.currentText() == "gemini"
+    assert dialog.api_key_edit.isVisibleTo(dialog)
+
+    dialog.provider_combo.setCurrentText("local-cli")
+    dialog.model_combo.setCurrentText("claude")
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    QtWidgets.QApplication.processEvents()
+    assert dialog.provider_combo.currentText() == "local-cli"
+    assert dialog.model_combo.currentText() == "claude"
+    dialog.save_button.click()
+
+    saved = store.load()
+    assert (saved.provider_id, saved.model_id, saved.mock_mode) == ("local-cli", "claude", False)
 
 
 def test_local_cli_settings_use_allowlisted_cli_without_api_key(tmp_path):
