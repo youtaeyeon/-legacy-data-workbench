@@ -25,6 +25,25 @@ from hospital_marketing.workflow import ImportWorkflow, WorkflowResult
 _APP = None
 
 
+@pytest.fixture(autouse=True)
+def _mock_cli_status_checks(monkeypatch):
+    from hospital_marketing.ai.cli_status import CLIStatus
+
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_all_cli_statuses",
+        lambda: {cli: CLIStatus(True, f"/mock/{cli}", "1.0", None) for cli in ("claude", "codex", "gemini")},
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.settings_dialog.cli_status.check_node_tool_status",
+        lambda: {"node": None, "npm": None},
+    )
+    yield
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        app.processEvents()
+
+
 def _app():
     global _APP
     if _APP is None:
