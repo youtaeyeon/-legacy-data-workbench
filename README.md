@@ -20,9 +20,11 @@
 
 ## AI 설정 가이드
 
+- 기본 연결은 PC에 설치·로그인한 Claude CLI를 이용하는 개인 구독 계정입니다. 앱의 AI 설정 창에서 `구독 계정 연결 (권장)` 아래 CLI를 선택하고 설치 상태를 확인하세요. 서비스 약관과 사용량 한도가 적용됩니다.
+- API 키 연결은 선택 사항이며, 설정 창의 `API 키 사용 (선택)` 영역을 펼쳐 제공자와 키를 지정합니다.
 - OpenAI API 키: [API keys](https://platform.openai.com/api-keys) · 모델 예시: `gpt-6-luna`, `gpt-6.1-sol`, `gpt-6-astra`
 - Anthropic API 키: [Console](https://console.anthropic.com/settings/keys) · 모델 예시: `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`
-- Gemini API 키: [Google AI Studio](https://aistudio.google.com/app/apikey) · 모델 예시: `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `gemini-4-argon`
+- Gemini API 키: [Google AI Studio](https://aistudio.google.com/app/apikey) · 기본 모델: `gemini-3.5-flash-lite` · 다른 모델 예시: `gemini-3.8-flash`, `gemini-4-argon`
 - 앱의 AI 설정 창에서 권장 모델을 고르거나 모델 ID를 직접 입력할 수 있습니다. 제공자별 현재 목록은 설정 창의 `설정 가이드`에서도 확인하세요.
 - 모델 ID는 바뀔 수 있으므로 실제 사용 전 공식 카탈로그를 확인하세요: [OpenAI](https://developers.openai.com/api/docs/models) · [Anthropic](https://platform.claude.com/docs/en/models/overview) · [Gemini](https://ai.google.dev/gemini-api/docs/models)
 - 목업 모드는 외부 AI 요청 없이 동작하며 비용이 발생하지 않습니다. 실제 제공자 선택 후 연결 테스트나 앱 처리를 실행하면 API 사용량에 따라 비용이 발생할 수 있습니다.
