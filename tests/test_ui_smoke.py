@@ -861,3 +861,64 @@ def test_import_runs_off_ui_thread_and_keeps_window_responsive(tmp_path):
         release.set()
         _wait_for_import(window)
         window.close()
+
+
+def test_closing_during_import_waits_for_completion_without_channel_prompt(tmp_path, monkeypatch):
+    from datetime import date
+    from hospital_marketing.domain import Hospital
+    import hospital_marketing.ui.main_window as main_window_module
+
+    _app()
+    started = Event()
+    release = Event()
+    target = tmp_path / "target"
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(target_dir=target, provider_id="local-cli", model_id="claude"))
+    existing = Hospital("EXISTING", "기존 병원", "가상 지역")
+    new_hospital = Hospital("NEW", "신규 병원", "가상 지역", date(2026, 1, 1))
+
+    class BlockingWorkflow(FakeWorkflow):
+        def run(self, *args, **kwargs):
+            started.set()
+            assert release.wait(5)
+            return super().run(*args, **kwargs)
+
+    class FakeRepository:
+        instances = 0
+
+        def __init__(self, _path):
+            type(self).instances += 1
+
+        def initialize(self):
+            pass
+
+        def list_hospitals(self):
+            return [existing] if self.instances == 1 else [existing, new_hospital]
+
+        def close(self):
+            pass
+
+    prompts = []
+    monkeypatch.setattr(main_window_module, "Repository", FakeRepository)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args: prompts.append(True) or QtWidgets.QMessageBox.StandardButton.Yes,
+    )
+    window = MainWindow(settings_store, BlockingWorkflow(target / "dashboard" / "index.html"))
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(target))
+    window.show()
+    window.run_button.click()
+
+    try:
+        assert started.wait(2)
+        window.close()
+        assert window.isVisible()
+        assert window.status_label.text() == "가져오기가 끝난 뒤 앱이 종료됩니다."
+    finally:
+        release.set()
+        _wait_for_import(window)
+
+    assert not window.isVisible()
+    assert prompts == []

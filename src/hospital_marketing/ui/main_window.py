@@ -409,7 +409,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 new_hospital_ids = [hospital.hospital_id for hospital in current.list_hospitals()
                                     if hospital.hospital_id not in existing_hospital_ids]
                 current.close()
-            if new_hospital_ids:
+            if new_hospital_ids and not self._close_when_import_finishes:
                 answer = QtWidgets.QMessageBox.question(
                     self, "신규 병원 온라인 채널", f"신규 병원 {len(new_hospital_ids)}곳의 채널을 찾을까요?",
                     QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
