@@ -240,24 +240,27 @@ class SettingsDialog(QtWidgets.QDialog):
         self.setModal(True)
 
         layout = QtWidgets.QVBoxLayout(self)
-        self.subscription_heading = QtWidgets.QLabel("구독 계정 연결 (권장)")
+        self.subscription_heading = QtWidgets.QLabel("연결 방식")
         self.subscription_heading.setObjectName("subscription_heading")
         self.subscription_heading.setStyleSheet("font-weight: bold; font-size: 16px")
         layout.addWidget(self.subscription_heading)
-        self.subscription_message = QtWidgets.QLabel(
-            "개인 구독 계정으로 로그인한 CLI를 사용합니다. 서비스 약관과 사용량 한도가 적용됩니다."
-        )
-        self.subscription_message.setWordWrap(True)
-        layout.addWidget(self.subscription_message)
-
-        self.connection_mode_combo = QtWidgets.QComboBox()
-        self.connection_mode_combo.addItem("구독 계정", "local-cli")
-        self.connection_mode_combo.addItem("API 키", "api")
-        self.connection_mode_combo.addItem("목업", "mock")
-        self.connection_mode_combo.setObjectName("connection_mode_combo")
+        mode_row = QtWidgets.QHBoxLayout()
+        self.connection_mode_group = QtWidgets.QButtonGroup(self)
+        self.subscription_radio = QtWidgets.QRadioButton("구독 계정 연결 (권장)")
+        self.api_radio = QtWidgets.QRadioButton("API 키 사용 (선택)")
+        self.mock_radio = QtWidgets.QRadioButton("과제 테스트(목업)")
+        for radio, mode in (
+            (self.subscription_radio, "local-cli"),
+            (self.api_radio, "api"),
+            (self.mock_radio, "mock"),
+        ):
+            self.connection_mode_group.addButton(radio)
+            radio.setProperty("connection_mode", mode)
+            mode_row.addWidget(radio)
+        layout.addLayout(mode_row)
         initial_mode = "local-cli" if settings.provider_id == "local-cli" else "mock" if settings.provider_id == "mock" else "api"
-        self.connection_mode_combo.setCurrentIndex(self.connection_mode_combo.findData(initial_mode))
-        layout.addWidget(self.connection_mode_combo)
+        initial_radio = {"local-cli": self.subscription_radio, "api": self.api_radio, "mock": self.mock_radio}[initial_mode]
+        initial_radio.setChecked(True)
 
         form = QtWidgets.QFormLayout()
         self._settings_form = form
@@ -272,8 +275,6 @@ class SettingsDialog(QtWidgets.QDialog):
             self.model_edit.setObjectName("model_edit")
             self.model_edit.setPlaceholderText("권장 모델을 고르거나 모델 ID를 입력하세요")
         self._populate_model_choices(settings.provider_id, settings.model_id, preserve_custom=True)
-        form.addRow(self.model_label, self.model_combo)
-
         self.cli_install_status_label = QtWidgets.QLabel("CLI 설치 상태를 확인해 주세요.")
         self.cli_install_status_label.setObjectName("cli_install_status_label")
         self.cli_install_status_label.setWordWrap(True)
@@ -290,16 +291,18 @@ class SettingsDialog(QtWidgets.QDialog):
         self.provider_combo.setObjectName("provider_combo")
         self.provider_combo.currentTextChanged.connect(self._provider_changed)
         self.provider_combo.hide()
-        layout.addLayout(form)
+        self.subscription_panel = QtWidgets.QWidget()
+        subscription_layout = QtWidgets.QVBoxLayout(self.subscription_panel)
+        subscription_layout.setContentsMargins(0, 0, 0, 0)
+        self.subscription_message = QtWidgets.QLabel(
+            "개인 구독 계정으로 로그인한 CLI를 사용합니다. 서비스 약관과 사용량 한도가 적용됩니다."
+        )
+        self.subscription_message.setWordWrap(True)
+        subscription_layout.addWidget(self.subscription_message)
+        form.addRow(self.model_label, self.model_combo)
+        subscription_layout.addLayout(form)
+        layout.addWidget(self.subscription_panel)
 
-        self.api_options_toggle = QtWidgets.QToolButton()
-        self.api_options_toggle.setText("API 키 사용 (선택)")
-        self.api_options_toggle.setCheckable(True)
-        self.api_options_toggle.setChecked(False)
-        self.api_options_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.api_options_toggle.setArrowType(QtCore.Qt.ArrowType.RightArrow)
-        self.api_options_toggle.setObjectName("api_options_toggle")
-        layout.addWidget(self.api_options_toggle)
         self.api_options_panel = QtWidgets.QWidget()
         self.api_options_panel.setObjectName("api_options_panel")
         api_form = QtWidgets.QFormLayout(self.api_options_panel)
@@ -311,6 +314,7 @@ class SettingsDialog(QtWidgets.QDialog):
         api_form.addRow("API 제공자", self.api_provider_combo)
         self.api_provider_label = QtWidgets.QLabel(f"선택된 API 제공자: {self.api_provider_combo.currentText()}")
         api_form.addRow(self.api_provider_label)
+        api_form.addRow(self.model_label, self.model_combo)
 
         self.api_key_edit = QtWidgets.QLineEdit()
         self.api_key_edit.setObjectName("api_key_edit")
@@ -321,11 +325,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self.key_status_label.setObjectName("key_status_label")
         api_form.addRow("저장된 키", self.key_status_label)
         layout.addWidget(self.api_options_panel)
-        self.api_options_toggle.toggled.connect(self._toggle_api_options)
-        self.api_options_toggle.setVisible(True)
-        self.connection_mode_combo.currentIndexChanged.connect(self._connection_mode_changed)
+        self.mock_message = QtWidgets.QLabel("목업 모드입니다. 외부 AI를 호출하지 않습니다.")
+        self.mock_message.setWordWrap(True)
+        layout.addWidget(self.mock_message)
+        self.connection_mode_group.buttonClicked.connect(self._connection_mode_changed)
         if initial_mode == "api":
-            self.api_options_toggle.setChecked(True)
             self.provider_combo.setCurrentText(self.api_provider_combo.currentText())
         self._set_local_cli_controls(settings.provider_id == "local-cli")
 
@@ -335,9 +339,7 @@ class SettingsDialog(QtWidgets.QDialog):
         if settings.provider_id == "local-cli":
             self.mock_mode_checkbox.setChecked(False)
             self.mock_mode_checkbox.setEnabled(False)
-        form.addRow("과제 테스트", self.mock_mode_checkbox)
-        self._connection_mode_changed(self.connection_mode_combo.currentIndex())
-        self._toggle_api_options(self.api_options_toggle.isChecked())
+        self.mock_mode_checkbox.hide()
         self.message_label = QtWidgets.QLabel("API 키는 OS 자격 증명 저장소에 보관됩니다.")
         self.message_label.setWordWrap(True)
         layout.addWidget(self.message_label)
@@ -415,6 +417,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.dialog_cancel_button.clicked.connect(self.reject)
         buttons.addWidget(self.dialog_cancel_button)
         layout.addLayout(buttons)
+        self._connection_mode_changed(initial_radio)
         self._refresh_key_status()
         if settings.provider_id == "local-cli":
             self._refresh_cli_status()
@@ -495,22 +498,25 @@ class SettingsDialog(QtWidgets.QDialog):
         if self.provider_combo.currentText() != provider_id:
             self.provider_combo.setCurrentText(provider_id)
 
-    def _connection_mode_changed(self, _index: int) -> None:
-        mode = self.connection_mode_combo.currentData()
+    def _connection_mode_changed(self, radio) -> None:
+        mode = radio.property("connection_mode")
         provider_id = mode if mode in ("local-cli", "mock") else self.api_provider_combo.currentText()
         if self.provider_combo.currentText() != provider_id:
             self.provider_combo.setCurrentText(provider_id)
-        self.mock_mode_checkbox.setVisible(mode == "mock")
         self.mock_mode_checkbox.setEnabled(mode == "mock")
         self.mock_mode_checkbox.setChecked(mode == "mock")
-        self.api_options_toggle.setChecked(mode == "api" and self.api_options_toggle.isChecked())
-        self.api_options_panel.setVisible(mode == "api" and self.api_options_toggle.isChecked())
-        self.cli_install_status_label.setVisible(mode == "local-cli")
-        self.cli_install_status_title.setVisible(mode == "local-cli")
-        self.cli_node_status_label.setVisible(mode == "local-cli")
-        self.cli_node_status_title.setVisible(mode == "local-cli")
-        self.model_label.setVisible(mode in ("local-cli", "api"))
-        self.model_combo.setVisible(mode in ("local-cli", "api"))
+        self.subscription_panel.setVisible(mode == "local-cli")
+        self.api_options_panel.setVisible(mode == "api")
+        self.mock_message.setVisible(mode == "mock")
+        self.check_cli_install_button.setVisible(mode == "local-cli")
+        self.install_cli_button.setVisible(
+            mode == "local-cli"
+            and _is_windows()
+            and (status := self._cli_statuses.get(self.model_combo.currentText())) is not None
+            and not status.installed
+        )
+        if mode != "local-cli":
+            self.login_cli_button.setVisible(False)
         if mode == "api" and self.model_combo.parentWidget() is not self.api_options_panel:
             self._settings_form.removeWidget(self.model_label)
             self._settings_form.removeWidget(self.model_combo)
@@ -519,14 +525,6 @@ class SettingsDialog(QtWidgets.QDialog):
             self._api_form.removeWidget(self.model_label)
             self._api_form.removeWidget(self.model_combo)
             self._settings_form.insertRow(0, self.model_label, self.model_combo)
-
-    def _toggle_api_options(self, expanded: bool) -> None:
-        self.api_options_panel.setVisible(
-            expanded and self.connection_mode_combo.currentData() == "api"
-        )
-        self.api_options_toggle.setArrowType(
-            QtCore.Qt.ArrowType.DownArrow if expanded else QtCore.Qt.ArrowType.RightArrow
-        )
 
     def _refresh_cli_status(self) -> None:
         if self._cli_status_worker is not None:
