@@ -156,7 +156,6 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
         self.worker.finished.connect(self._discovery_finished)
         self.worker.finished.connect(self._worker_thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
-        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
         self._worker_thread.start()
 
     def _set_progress(self, current: int, total: int, name: str) -> None:
