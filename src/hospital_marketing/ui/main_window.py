@@ -33,6 +33,33 @@ PATH_GUIDE_BUTTON_SIZE = 20
 PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
 
 
+class _ImportWorker(QtCore.QObject):
+    finished = QtCore.Signal(object, object)
+
+    def __init__(self, workflow: ImportWorkflow, source_dir: Path, target_dir: Path, settings: AppSettings):
+        super().__init__()
+        self.workflow = workflow
+        self.source_dir = source_dir
+        self.target_dir = target_dir
+        self.settings = settings
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            result = self.workflow.run(
+                self.source_dir,
+                self.target_dir,
+                provider_id=self.settings.provider_id,
+                model_id=self.settings.model_id,
+                mock_mode=self.settings.mock_mode,
+                enabled_extensions=self.settings.enabled_extensions,
+            )
+        except Exception as exc:
+            self.finished.emit(None, exc)
+        else:
+            self.finished.emit(result, None)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(
         self,
@@ -46,6 +73,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.workflow = workflow
         self.open_path = open_path or self._open_local_path
         self.dashboard_path: Path | None = None
+        self._import_thread: QtCore.QThread | None = None
+        self._import_worker: _ImportWorker | None = None
+        self._import_context: tuple[AppSettings, Path, list[LargeSourceFile], set[str]] | None = None
+        self._close_when_import_finishes = False
         self.setWindowTitle(f"병원 마케팅 위키 MVP · v{APP_VERSION}")
         self.resize(900, 500)
         self.setMinimumWidth(780)
@@ -161,6 +192,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.channel_candidates_button.setObjectName("channel_candidates_button")
         self.channel_candidates_button.clicked.connect(lambda: self._open_channel_candidates())
         actions.addWidget(self.channel_candidates_button)
+        self.import_progress = QtWidgets.QProgressBar()
+        self.import_progress.setObjectName("import_progress")
+        self.import_progress.setRange(0, 0)
+        self.import_progress.setVisible(False)
+        actions.addWidget(self.import_progress)
         layout.addWidget(self.actions_group)
 
         self.status_label = QtWidgets.QLabel("Source와 Target을 정한 뒤 실행하세요.")
@@ -317,17 +353,32 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             existing_hospital_ids = set()
         self.run_button.setEnabled(False)
-        self.status_label.setText("선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다.")
-        QtWidgets.QApplication.processEvents()
+        self.import_progress.setVisible(True)
+        self.status_label.setText("처리 중 · 선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다.")
+        self._import_context = (updated, target_dir, large_source_files, existing_hospital_ids)
+        self._import_thread = QtCore.QThread(self)
+        self._import_worker = _ImportWorker(self.workflow, source_dir, target_dir, updated)
+        self._import_worker.moveToThread(self._import_thread)
+        self._import_thread.started.connect(self._import_worker.run)
+        self._import_worker.finished.connect(self._on_import_finished)
+        self._import_worker.finished.connect(self._import_thread.quit)
+        self._import_worker.finished.connect(self._import_worker.deleteLater)
+        self._import_thread.finished.connect(self._cleanup_import_thread)
+        self._import_thread.start()
+
+    @QtCore.Slot(object, object)
+    def _on_import_finished(self, result, error) -> None:
+        self.import_progress.setVisible(False)
+        self.run_button.setEnabled(True)
+        context = self._import_context
+        if context is None:
+            return
+        updated, target_dir, large_source_files, existing_hospital_ids = context
         try:
-            result = self.workflow.run(
-                source_dir,
-                target_dir,
-                provider_id=updated.provider_id,
-                model_id=updated.model_id,
-                mock_mode=updated.mock_mode,
-                enabled_extensions=updated.enabled_extensions,
-            )
+            if error is not None:
+                raise error
+            if result is None:
+                raise RuntimeError("가져오기 결과가 없습니다.")
             self.dashboard_path = result.outputs.dashboard
             report = result.report
             status = (
@@ -375,8 +426,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status_label.setText("처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요.")
             self.open_dashboard_button.setEnabled(False)
             self.export_dashboard_button.setEnabled(False)
-        finally:
-            self.run_button.setEnabled(True)
+
+    @QtCore.Slot()
+    def _cleanup_import_thread(self) -> None:
+        self._import_thread = None
+        self._import_worker = None
+        self._import_context = None
+        if self._close_when_import_finishes:
+            self.close()
+
+    def closeEvent(self, event) -> None:
+        if self._import_thread is not None and self._import_thread.isRunning():
+            self._close_when_import_finishes = True
+            self.status_label.setText("가져오기가 끝난 뒤 앱이 종료됩니다.")
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     @staticmethod
     def _source_conflicts_with_target(source_dir: Path, target_dir: Path) -> bool:

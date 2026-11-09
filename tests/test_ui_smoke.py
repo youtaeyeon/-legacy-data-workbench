@@ -1,5 +1,6 @@
 import os
 import re
+from threading import Event
 from pathlib import Path
 from typing import cast
 
@@ -31,6 +32,15 @@ def _app():
     return _APP
 
 
+def _wait_for_import(window, timeout_ms=5_000):
+    deadline = QtCore.QDeadlineTimer(timeout_ms)
+    while window._import_thread is not None and window._import_thread.isRunning() and not deadline.hasExpired():
+        _app().processEvents()
+        QtCore.QThread.msleep(5)
+    _app().processEvents()
+    assert window._import_thread is None or not window._import_thread.isRunning()
+
+
 class FakeWorkflow:
     def __init__(self, dashboard_path):
         self.calls = []
@@ -56,6 +66,7 @@ def test_main_window_requires_paths_before_import(tmp_path):
     window = MainWindow(SettingsStore(tmp_path / "settings.json"), workflow)
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert "source" in window.status_label.text().lower()
     assert workflow.calls == []
@@ -73,6 +84,7 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     window.target_path_edit.setText(str(target))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert workflow.calls == [(source, target, "local-cli", "claude", False)]
     assert settings_store.load().source_dir == source
@@ -148,6 +160,7 @@ def test_import_prompts_and_opens_channel_search_for_only_new_hospitals(tmp_path
     window.source_path_edit.setText(str(tmp_path / "source"))
     window.target_path_edit.setText(str(target))
     window.run_button.click()
+    _wait_for_import(window)
     assert prompts == ["신규 병원 1곳의 채널을 찾을까요?"]
     assert opened == [(["NEW"], True)]
     window.close()
@@ -166,6 +179,7 @@ def test_main_window_status_redacts_masked_provider_key(tmp_path):
     window.target_path_edit.setText(str(tmp_path / "target"))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     status = window.status_label.text()
     assert "[REDACTED]" in status
@@ -435,6 +449,7 @@ def test_main_window_does_not_run_when_no_product_keyword_is_enabled(tmp_path, m
     window.target_path_edit.setText(str(tmp_path / "target"))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert workflow.calls == []
     assert "검색 단어" in window.status_label.text()
@@ -469,6 +484,7 @@ def test_main_window_keyword_dialog_saves_changes_and_import_preserves_them(tmp_
     window.source_path_edit.setText(str(tmp_path / "source"))
     window.target_path_edit.setText(str(target))
     window.run_button.click()
+    _wait_for_import(window)
 
     assert settings_store.load().product_keywords == updated_keywords
 
@@ -508,6 +524,7 @@ def test_main_window_persists_extension_checkboxes_and_black_folder_labels(tmp_p
     window.source_path_edit.setText(str(source))
     window.target_path_edit.setText(str(target))
     window.run_button.click()
+    _wait_for_import(window)
 
     assert workflow.extension_calls[-1] == (".txt",)
     assert settings_store.load().enabled_extensions == (".txt",)
@@ -536,6 +553,7 @@ def test_main_window_blocks_source_equal_to_or_nested_in_target(tmp_path, monkey
         window.target_path_edit.setText(str(target))
 
         window.run_button.click()
+        _wait_for_import(window)
 
         assert workflow.calls == []
         assert "Target 폴더 안에 Source" in window.status_label.text()
@@ -559,6 +577,7 @@ def test_main_window_allows_target_inside_source_and_reports_empty_source(tmp_pa
     window.target_path_edit.setText(str(target))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert len(workflow.calls) == 1
     assert "읽을 파일이 없습니다" in window.status_label.text()
@@ -634,6 +653,7 @@ def test_run_error_never_displays_secret_from_exception(tmp_path):
     window.target_path_edit.setText(str(tmp_path / "target"))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert "secret-test-value" not in window.status_label.text()
     assert window.status_label.text() == "처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요."
@@ -657,6 +677,7 @@ def test_provider_error_disables_dashboard_export_when_previous_dashboard_exists
     window = MainWindow(settings_store, cast(ImportWorkflow, ProviderFailingWorkflow()))
     assert window.export_dashboard_button.isEnabled()
     window.run_button.click()
+    _wait_for_import(window)
 
     assert not window.open_dashboard_button.isEnabled()
     assert not window.export_dashboard_button.isEnabled()
@@ -678,6 +699,7 @@ def test_provider_error_shows_cause_and_mock_mode_fallback(tmp_path):
     window.target_path_edit.setText(str(tmp_path / "target"))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert "AI 모델을 찾을 수 없습니다" in window.status_label.text()
     assert "목업 모드로 다시 실행" in window.status_label.text()
@@ -743,6 +765,7 @@ def test_large_source_file_in_real_ai_mode_can_be_cancelled_before_workflow(tmp_
     window.target_path_edit.setText(str(target))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert len(confirmations) == 1
     assert confirmations[0] == ("large.txt",)
@@ -766,6 +789,7 @@ def test_large_source_file_in_real_ai_mode_continues_after_confirmation(tmp_path
     window.target_path_edit.setText(str(target))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert len(workflow.calls) == 1
     assert "큰 원본 파일" in window.status_label.text()
@@ -793,7 +817,47 @@ def test_large_source_file_in_mock_mode_runs_without_confirmation_and_shows_warn
     window.target_path_edit.setText(str(target))
 
     window.run_button.click()
+    _wait_for_import(window)
 
     assert len(workflow.calls) == 1
     assert "실제 AI로 실행하면" in window.status_label.text()
     assert "large.txt" in window.status_label.text()
+
+
+def test_import_runs_off_ui_thread_and_keeps_window_responsive(tmp_path):
+    _app()
+    started = Event()
+    release = Event()
+    dashboard = tmp_path / "target" / "dashboard" / "index.html"
+
+    class BlockingWorkflow(FakeWorkflow):
+        def run(self, *args, **kwargs):
+            started.set()
+            assert release.wait(5)
+            return super().run(*args, **kwargs)
+
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), BlockingWorkflow(dashboard))
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(tmp_path / "target"))
+    window.show()
+    timer_fired = []
+    QtCore.QTimer.singleShot(100, lambda: (timer_fired.append(True), release.set()))
+
+    window.run_button.click()
+    try:
+        assert started.wait(2)
+        assert not window.run_button.isEnabled()
+        assert window.import_progress.isVisible()
+        assert "처리 중" in window.status_label.text()
+        _app().processEvents()
+        _wait_for_import(window)
+
+        assert timer_fired == [True]
+        assert window.run_button.isEnabled()
+        assert not window.import_progress.isVisible()
+        assert "처리 완료" in window.status_label.text()
+        assert window.open_dashboard_button.isEnabled()
+    finally:
+        release.set()
+        _wait_for_import(window)
+        window.close()
