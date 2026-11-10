@@ -12,7 +12,8 @@ def test_workflow_initial_and_weekly_runs_persist_and_regenerate_outputs(tmp_pat
     build_fixtures(fixtures)
     target = tmp_path / "target"
     settings = SettingsStore(tmp_path / "settings.json")
-    settings.save(AppSettings(source_dir=fixtures / "initial", target_dir=target, mock_mode=True))
+    settings.save(AppSettings(source_dir=fixtures / "initial", target_dir=target, mock_mode=True,
+                             auto_collect_hospital_channels=False))
     workflow = ImportWorkflow(settings_store=settings)
 
     first = workflow.run(fixtures / "initial", target)
@@ -30,6 +31,30 @@ def test_workflow_initial_and_weekly_runs_persist_and_regenerate_outputs(tmp_pat
     report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
     assert report["inserted_count"] == 1
     assert "api_key" not in json.dumps(report)
+
+
+def test_mock_workflow_collects_channels_and_recent_posts_only_for_new_hospitals(tmp_path):
+    from hospital_marketing.repository import Repository
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    target = tmp_path / "target"
+    workflow = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"))
+
+    first = workflow.run(fixtures / "initial", target, mock_mode=True)
+    second = workflow.run(fixtures / "weekly", target, mock_mode=True)
+
+    assert (first.channels_collected, first.posts_collected) == (3, 3)
+    assert (second.channels_collected, second.posts_collected) == (1, 1)
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    assert len(repository.list_channels("MOCK-001")) == 2
+    assert len(repository.list_contents("MOCK-001")) == 3
+    source = repository.connection.execute(
+        "SELECT source FROM channels WHERE hospital_id='MOCK-001' AND url='https://instagram.com/mock-hospital'"
+    ).fetchone()[0]
+    repository.close()
+    assert source == "자동 수집"
 
 
 def test_workflow_converts_enabled_documents_to_wiki_markdown(tmp_path):

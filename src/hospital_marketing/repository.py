@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS channels (
     platform TEXT NOT NULL,
     channel_name TEXT NOT NULL,
     url TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '원본',
     UNIQUE(hospital_id, platform, url)
 );
 CREATE TABLE IF NOT EXISTS channel_candidates (
@@ -113,6 +114,9 @@ class Repository:
 
     def initialize(self) -> None:
         self.connection.executescript(SCHEMA)
+        channel_columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(channels)")}
+        if "source" not in channel_columns:
+            self.connection.execute("ALTER TABLE channels ADD COLUMN source TEXT NOT NULL DEFAULT '원본'")
 
     def close(self) -> None:
         if self._connection is not None:
@@ -231,6 +235,15 @@ class Repository:
             "SELECT * FROM channels WHERE hospital_id=? ORDER BY id", (hospital_id,)
         ).fetchall()
         return [Channel(row["hospital_id"], row["platform"], row["channel_name"], row["url"]) for row in rows]
+
+    def add_auto_channel(self, channel: Channel) -> None:
+        self.connection.execute(
+            """INSERT INTO channels (hospital_id, platform, channel_name, url, source)
+               VALUES (?, ?, ?, ?, '자동 수집')
+               ON CONFLICT(hospital_id, platform, url) DO UPDATE SET
+                 channel_name=excluded.channel_name, source='자동 수집'""",
+            (channel.hospital_id, channel.platform, channel.channel_name, channel.url),
+        )
 
     def save_channel_candidate(
         self, hospital_id: str, platform: str, channel_name: str, url: str,

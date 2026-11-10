@@ -11,6 +11,8 @@ from .credentials import CredentialStore
 from .documents.conversion import convert_source_documents
 from .documents.size_warnings import find_large_source_files, large_source_file_issue
 from .domain import ContentScript
+from .domain import Channel, ContentItem
+from .channel_discovery import parse_discovery_response, ChannelDiscoveryService
 from .importer import ImportService
 from .outputs.generate import OutputManifest, generate_outputs
 from .report import ImportReport
@@ -24,6 +26,11 @@ class WorkflowResult:
     outputs: OutputManifest
     classified_count: int
     needs_review_count: int
+    channels_collected: int = 0
+    posts_collected: int = 0
+    channels_needing_review: int = 0
+    channel_failures: int = 0
+    channel_discarded: int = 0
 
 
 class ImportWorkflow:
@@ -50,6 +57,7 @@ class ImportWorkflow:
         mock_mode: bool = True,
         enabled_extensions: Sequence[str] | None = None,
         on_progress: Callable[[str], None] | None = None,
+        cancel_event=None,
     ) -> WorkflowResult:
         source_dir = Path(source_dir)
         target_dir = Path(target_dir)
@@ -63,6 +71,7 @@ class ImportWorkflow:
         repository = self.repository_factory(target_dir / "data" / "app.db")
         repository.initialize()
         try:
+            existing_ids = {hospital.hospital_id for hospital in repository.list_hospitals()}
             report = ImportService(repository).import_folder(
                 source_dir,
                 enabled_extensions=extensions,
@@ -76,6 +85,36 @@ class ImportWorkflow:
             else:
                 api_key = self.credential_store.get(provider_id)
                 provider = self.provider_registry.create(provider_id, api_key=api_key or "", model=model_id)
+
+            channels_collected = posts_collected = channels_needing_review = channel_failures = channel_discarded = 0
+            if settings.auto_collect_hospital_channels:
+                discover = getattr(provider, "discover_channels_and_posts", None)
+                if callable(discover):
+                    new_hospitals = [hospital for hospital in repository.list_hospitals()
+                                     if hospital.hospital_id not in existing_ids]
+                    service = ChannelDiscoveryService(repository)
+                    for index, hospital in enumerate(new_hospitals, 1):
+                        if cancel_event is not None and cancel_event.is_set():
+                            break
+                        if on_progress:
+                            on_progress(f"신규 병원 채널·게시물 수집 중 {index}/{len(new_hospitals)} · {hospital.hospital_name}")
+                        try:
+                            channels, posts, discarded = parse_discovery_response(discover(hospital))
+                            channel_discarded += discarded
+                            for candidate in channels:
+                                if candidate.confidence >= 0.7:
+                                    repository.add_auto_channel(Channel(hospital.hospital_id, candidate.platform,
+                                                                        candidate.channel_name, candidate.url))
+                                    channels_collected += 1
+                                else:
+                                    service.save_candidates(hospital.hospital_id, [candidate])
+                                    channels_needing_review += 1
+                            for post in posts:
+                                repository.add_content(ContentItem(hospital.hospital_id, post.platform, post.title,
+                                    post.url, post.summary, post.published_at, None, "pending", None))
+                                posts_collected += 1
+                        except Exception:
+                            channel_failures += 1
 
             classified_count = 0
             needs_review_count = 0
@@ -141,7 +180,8 @@ class ImportWorkflow:
                 registered_products=products,
             )
             self._write_import_report(report, target_dir)
-            return WorkflowResult(report, outputs, classified_count, needs_review_count)
+            return WorkflowResult(report, outputs, classified_count, needs_review_count, channels_collected,
+                                  posts_collected, channels_needing_review, channel_failures, channel_discarded)
         finally:
             repository.close()
 

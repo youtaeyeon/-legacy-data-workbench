@@ -5,7 +5,9 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from .domain import Channel, Hospital
+from datetime import date
+
+from .domain import Channel, ContentItem, Hospital
 from .providers import ProviderRequestError
 from .repository import Repository
 
@@ -31,6 +33,83 @@ class ChannelCandidate:
     id: int = 0
     hospital_id: str = ""
     status: str = "pending"
+
+
+@dataclass(frozen=True)
+class DiscoveredPost:
+    platform: str
+    title: str
+    url: str
+    published_at: date | None
+    summary: str
+    channel_url: str
+
+
+def parse_discovery_response(response: str) -> tuple[list[ChannelCandidate], list[DiscoveredPost], int]:
+    try:
+        payload = response.strip()
+        fenced_json = re.search(r"```(?:json)?\s*(.*?)\s*(?:```|$)", payload, re.DOTALL | re.IGNORECASE)
+        if fenced_json:
+            payload = fenced_json.group(1)
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            for start, char in enumerate(payload):
+                if char == "{":
+                    try:
+                        data, _ = decoder.raw_decode(payload[start:])
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            else:
+                raise
+        if not isinstance(data, dict):
+            raise TypeError
+        channels: list[ChannelCandidate] = []
+        posts: list[DiscoveredPost] = []
+        discarded = 0
+        raw_channels = data.get("channels", [])
+        raw_posts = data.get("posts", [])
+        if not isinstance(raw_channels, list) or not isinstance(raw_posts, list):
+            raise TypeError
+        for row in raw_channels:
+            try:
+                if not isinstance(row, dict):
+                    raise TypeError
+                channels.append(validate_candidate(ChannelCandidate(
+                    str(row["platform"]), str(row["channel_name"]), str(row["url"]),
+                    str(row["evidence"]), float(row["confidence"]),
+                )))
+            except (KeyError, TypeError, ValueError, OverflowError):
+                discarded += 1
+        for row in raw_posts:
+            try:
+                if not isinstance(row, dict):
+                    raise TypeError
+                platform = str(row["platform"])
+                if platform not in PLATFORM_DOMAINS:
+                    raise ValueError
+                channel_url = str(row["channel_url"])
+                channel = next((item for item in channels if item.url == channel_url and item.platform == platform), None)
+                if channel is None:
+                    raise ValueError
+                parsed = urlsplit(str(row["url"]).strip())
+                host = parsed.hostname.lower().rstrip(".") if parsed.hostname else ""
+                if parsed.scheme not in {"http", "https"} or not any(
+                    host == domain or host.endswith("." + domain) for domain in PLATFORM_DOMAINS[platform]
+                ) or parsed.username or parsed.password:
+                    raise ValueError
+                title, summary = str(row["title"]).strip(), str(row["summary"]).strip()
+                if not title or not summary:
+                    raise ValueError
+                published = date.fromisoformat(str(row["published_at"])) if row.get("published_at") else None
+                posts.append(DiscoveredPost(platform, title, parsed.geturl(), published, summary, channel_url))
+            except (KeyError, TypeError, ValueError, OverflowError):
+                discarded += 1
+        return channels, posts[:5], discarded + max(0, len(posts) - 5)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        raise ProviderRequestError("채널·게시물 검색 응답 형식이 올바르지 않습니다.") from None
 
 
 def validate_candidate(candidate: ChannelCandidate) -> ChannelCandidate:

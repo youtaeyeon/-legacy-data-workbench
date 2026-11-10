@@ -340,6 +340,10 @@ class SettingsDialog(QtWidgets.QDialog):
             self.mock_mode_checkbox.setChecked(False)
             self.mock_mode_checkbox.setEnabled(False)
         self.mock_mode_checkbox.hide()
+        self.auto_collect_checkbox = QtWidgets.QCheckBox("신규 병원 채널·게시물 자동 수집")
+        self.auto_collect_checkbox.setObjectName("auto_collect_hospital_channels_checkbox")
+        self.auto_collect_checkbox.setChecked(settings.auto_collect_hospital_channels)
+        layout.addWidget(self.auto_collect_checkbox)
         self.message_label = QtWidgets.QLabel("API 키는 OS 자격 증명 저장소에 보관됩니다.")
         self.message_label.setWordWrap(True)
         layout.addWidget(self.message_label)
@@ -938,6 +942,7 @@ class SettingsDialog(QtWidgets.QDialog):
                 provider_id=provider_id,
                 model_id=model_id,
                 mock_mode=self.mock_mode_checkbox.isChecked(),
+                auto_collect_hospital_channels=self.auto_collect_checkbox.isChecked(),
             ))
         except (CredentialStoreError, ValueError) as exc:
             self.message_label.setText(str(exc))
