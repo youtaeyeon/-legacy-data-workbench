@@ -15,6 +15,7 @@ from .readers import (
 
 @dataclass
 class DocumentConversionResult:
+    source_files: list[str] = field(default_factory=list)
     files_seen: int = 0
     files_converted: int = 0
     files_failed: int = 0
@@ -36,6 +37,7 @@ def convert_source_documents(
     result = DocumentConversionResult(files_seen=len(files))
     for source_file in files:
         relative_name = source_file.relative_to(source_dir).as_posix()
+        result.source_files.append(relative_name)
         try:
             document = read_document(source_file, root=source_dir)
             if not document.text.strip():

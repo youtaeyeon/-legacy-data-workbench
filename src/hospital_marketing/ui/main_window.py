@@ -280,10 +280,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..credentials import CredentialStore
 
         dialog = SettingsDialog(self.settings_store, CredentialStore(), ProviderRegistry(), self)
-        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            settings = self.settings_store.load()
-            self.source_path_edit.setText(str(settings.source_dir or ""))
-            self.target_path_edit.setText(str(settings.target_dir or ""))
+        dialog.exec()
 
     def _open_product_keywords(self) -> None:
         settings = self.settings_store.load()
@@ -354,7 +351,9 @@ class MainWindow(QtWidgets.QMainWindow):
             existing_hospital_ids = set()
         self.run_button.setEnabled(False)
         self.import_progress.setVisible(True)
-        self.status_label.setText("처리 중 · 선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다.")
+        self.status_label.setText(
+            f"처리 중 · Source {source_dir} · 선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다."
+        )
         self._import_context = (updated, target_dir, large_source_files, existing_hospital_ids)
         self._import_thread = QtCore.QThread(self)
         self._import_worker = _ImportWorker(self.workflow, source_dir, target_dir, updated)
@@ -381,11 +380,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 raise RuntimeError("가져오기 결과가 없습니다.")
             self.dashboard_path = result.outputs.dashboard
             report = result.report
+            source_files = " · ".join(report.source_files) if report.source_files else "읽은 파일 없음"
             status = (
-                f"처리 완료 · 읽은 파일 {report.files_seen} · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
+                f"처리 완료 · Source {report.source_dir or updated.source_dir} · {source_files} · 읽은 파일 {report.files_seen} · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
                 f"변경 없음 {report.unchanged_count} · 오류 {sum(issue.code != 'large_source_file' for issue in report.issues)} · "
                 f"분류 {result.classified_count} · 검토 필요 {result.needs_review_count}"
             )
+            if report.inserted_count == 0 and report.updated_count == 0 and report.unchanged_count > 0:
+                status += " · 이미 가져온 파일과 같습니다. Source 폴더를 확인하세요."
             if report.files_seen == 0:
                 status += " · 읽을 파일이 없습니다. 선택 확장자 파일이 폴더 바로 아래에 있는지 확인하세요."
             if large_source_files:
