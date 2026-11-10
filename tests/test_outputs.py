@@ -90,6 +90,10 @@ def test_dashboard_uses_reference_layout_and_only_available_hospital_fields(tmp_
     manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
 
     html = manifest.dashboard.read_text(encoding="utf-8")
+    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
+    contents = json.loads(payload)["hospitals"][0]["contents"]
+    assert contents[0]["relevance_status"] == "relevant"
+    assert contents[0]["usage_status"] == "미활용"
     assert ".side" in html
     assert "backdrop-filter:blur" in html
     assert "--blue:#7899f5" in html
