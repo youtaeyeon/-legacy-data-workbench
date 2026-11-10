@@ -49,6 +49,8 @@ def test_workflow_converts_enabled_documents_to_wiki_markdown(tmp_path):
     assert result.report.files_seen == 1
     report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
     assert report["documents_converted_count"] == 1
+    assert report["source_dir"] == str(source)
+    assert report["source_files"] == ["weekly-note.txt"]
 
 
 def test_corrupt_selected_workbook_is_counted_as_one_failed_file(tmp_path):

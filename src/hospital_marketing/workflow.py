@@ -107,6 +107,8 @@ class ImportWorkflow:
             document_result = convert_source_documents(
                 source_dir, target_dir, extensions, provider
             )
+            report.source_dir = str(source_dir)
+            report.source_files = document_result.source_files
             report.files_seen = document_result.files_seen
             report.documents_converted_count = document_result.files_converted
             structured_failures = {
@@ -142,6 +144,8 @@ class ImportWorkflow:
         path = target_dir / "reports" / "last-import.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
+            "source_dir": report.source_dir,
+            "source_files": report.source_files,
             "files_seen": report.files_seen,
             "files_failed": report.files_failed,
             "documents_converted_count": report.documents_converted_count,

@@ -13,6 +13,8 @@ class ImportIssue:
 
 @dataclass
 class ImportReport:
+    source_dir: str = ""
+    source_files: list[str] = field(default_factory=list)
     files_seen: int = 0
     files_failed: int = 0
     documents_converted_count: int = 0

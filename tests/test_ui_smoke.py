@@ -69,10 +69,12 @@ class FakeWorkflow:
     def run(self, source_dir, target_dir, *, provider_id="mock", model_id="", mock_mode=True, enabled_extensions=None):
         self.calls.append((Path(source_dir), Path(target_dir), provider_id, model_id, mock_mode))
         self.extension_calls.append(tuple(enabled_extensions or ()))
+        source_dir = Path(source_dir)
+        source_files = sorted(path.name for path in source_dir.iterdir()) if source_dir.is_dir() else []
         self.dashboard_path.parent.mkdir(parents=True, exist_ok=True)
         self.dashboard_path.write_text("<html></html>", encoding="utf-8")
         return WorkflowResult(
-            ImportReport(inserted_count=2, updated_count=1, unchanged_count=3),
+            ImportReport(source_dir=str(source_dir), source_files=source_files, inserted_count=2, updated_count=1, unchanged_count=3),
             OutputManifest([], self.dashboard_path, Path(target_dir) / "exports" / "marketing.xlsx"),
             classified_count=4,
             needs_review_count=0,
@@ -941,3 +943,75 @@ def test_closing_during_import_waits_for_completion_without_channel_prompt(tmp_p
 
     assert not window.isVisible()
     assert prompts == []
+
+
+def test_ai_settings_save_does_not_replace_paths_selected_on_main_window(tmp_path, monkeypatch):
+    import hospital_marketing.ui.main_window as main_window_module
+
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(source_dir=tmp_path / "old-source", target_dir=tmp_path / "old-target"))
+
+    class AcceptedDialog:
+        def __init__(self, *_args): pass
+        def exec(self): return QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(main_window_module, "SettingsDialog", AcceptedDialog)
+    target = tmp_path / "selected-target"
+    source = tmp_path / "20261109"
+    window = MainWindow(settings_store, FakeWorkflow(target / "dashboard" / "index.html"))
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window._open_settings()
+
+    assert window.source_path_edit.text() == str(source)
+    assert window.target_path_edit.text() == str(target)
+    window.close()
+
+
+def test_import_status_identifies_source_folder_before_and_after_read(tmp_path):
+    _app()
+    source = tmp_path / "20261109"
+    source.mkdir()
+    (source / "20261109_계약병원.xlsx").write_bytes(b"mock")
+    target = tmp_path / "target"
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(target / "dashboard" / "index.html"))
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window.run_button.click()
+    assert f"Source {source}" in window.status_label.text()
+    _wait_for_import(window)
+
+    assert f"Source {source}" in window.status_label.text()
+    assert "20261109_계약병원.xlsx" in window.status_label.text()
+    window.close()
+
+
+def test_import_status_warns_when_every_hospital_is_unchanged(tmp_path):
+    _app()
+    source = tmp_path / "20261109"
+    source.mkdir()
+    target = tmp_path / "target"
+    workflow = FakeWorkflow(target / "dashboard" / "index.html")
+
+    def return_unchanged(*args, **kwargs):
+        result = FakeWorkflow.run(workflow, *args, **kwargs)
+        result.report.inserted_count = 0
+        result.report.updated_count = 0
+        result.report.unchanged_count = 2
+        return result
+
+    workflow.run = return_unchanged
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), workflow)
+    window.source_path_edit.setText(str(source))
+    window.target_path_edit.setText(str(target))
+
+    window.run_button.click()
+    _wait_for_import(window)
+
+    assert "신규 0" in window.status_label.text()
+    assert "변경 없음 2" in window.status_label.text()
+    assert "이미 가져온 파일과 같습니다. Source 폴더를 확인하세요." in window.status_label.text()
+    window.close()
