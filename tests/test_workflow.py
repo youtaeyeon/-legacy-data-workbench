@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from hospital_marketing.settings import AppSettings, SettingsStore
 from hospital_marketing.workflow import ImportWorkflow
 from scripts.create_mock_workbooks import build_fixtures
@@ -109,6 +111,70 @@ def test_workflow_uses_enabled_product_keywords_for_classification(tmp_path):
     ImportWorkflow(settings_store=settings, provider_registry=Registry()).run(source, target)
 
     assert provider.products == ("울트라클리어 엘리트", "울트라클리어")
+
+
+@pytest.mark.parametrize("provider_id,mock_mode,use_batch", [
+    ("local-cli", False, True),
+    ("openai", False, False),
+    ("local-cli", True, False),
+])
+def test_workflow_selects_expected_classification_method_and_reports_progress(tmp_path, provider_id, mock_mode, use_batch):
+    from hospital_marketing.ai.base import RelevanceResult
+    from hospital_marketing.domain import ContentItem, Hospital
+    from hospital_marketing.repository import Repository
+
+    class FakeProvider:
+        def __init__(self):
+            self.single_calls = []
+            self.batch_calls = []
+
+        def classify_content(self, item, products):
+            self.single_calls.append(item)
+            return RelevanceResult("relevant", "제품", "단건 근거")
+
+        def classify_contents(self, items, products):
+            self.batch_calls.append(tuple(items))
+            return [RelevanceResult("relevant", "제품", "일괄 근거") for _item in items]
+
+        def summarize_script(self, text):
+            return "요약"
+
+        def summarize_hospital(self, hospital):
+            return "요약"
+
+        def convert_document_to_markdown(self, source_name, text):
+            return text
+
+    provider = FakeProvider()
+
+    class Registry:
+        def create(self, *_args, **_kwargs):
+            return provider
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_hospital(Hospital("MOCK-001", "목업 병원"))
+    item = ContentItem("MOCK-001", "YouTube", "제목", "https://example.test", "", None, None, "pending", None)
+    repository.add_content(item)
+    repository.close()
+    progress = []
+
+    ImportWorkflow(
+        settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=Registry(),
+        credential_store=type("Credentials", (), {"get": lambda self, _provider_id: "test-key"})(),
+    ).run(source, target, provider_id=provider_id, mock_mode=mock_mode, on_progress=progress.append)
+
+    assert bool(provider.batch_calls) is use_batch
+    assert bool(provider.single_calls) is not use_batch
+    assert progress == ["AI 분류 중 · 병원 1/1"]
+    saved = Repository(target / "data" / "app.db")
+    saved.initialize()
+    classified = saved.list_contents("MOCK-001")[0]
+    saved.close()
+    assert classified.relevance_status == "relevant"
+    assert classified.evidence == ("일괄 근거" if use_batch else "단건 근거")
 
 def test_workflow_reports_large_source_warning_without_counting_failure(tmp_path):
     from hospital_marketing.documents.size_warnings import LARGE_SOURCE_FILE_THRESHOLD_BYTES
