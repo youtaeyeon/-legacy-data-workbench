@@ -20,6 +20,7 @@ from ...providers import ProviderConfigurationError, ProviderRequestError, sanit
 DEFAULT_TIMEOUT_SECONDS = 120
 STDIN_PROMPT_THRESHOLD = 8_000
 APP_API_KEY_ENV_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+MAX_CLASSIFICATION_BATCH_SIZE = 20
 
 
 class LocalCLIProvider(AIProvider):
@@ -78,6 +79,15 @@ class LocalCLIProvider(AIProvider):
         for name in APP_API_KEY_ENV_VARS:
             environment.pop(name, None)
         try:
+            run_options = {}
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                run_options = {
+                    "creationflags": subprocess.CREATE_NO_WINDOW,
+                    "startupinfo": startupinfo,
+                }
             with tempfile.TemporaryDirectory(dir=self.temp_dir) as working_directory:
                 completed = subprocess.run(
                     command,
@@ -90,6 +100,7 @@ class LocalCLIProvider(AIProvider):
                     errors="replace",
                     timeout=self.timeout,
                     check=False,
+                    **run_options,
                 )
         except FileNotFoundError:
             raise ProviderRequestError(f"{self.cli} CLI를 실행할 수 없습니다. 설치 상태를 확인해 주세요.") from None
@@ -161,6 +172,40 @@ class LocalCLIProvider(AIProvider):
         if status == "irrelevant":
             return RelevanceResult("irrelevant", None, str(evidence or "제품 관련 근거 없음"))
         return RelevanceResult("needs_review", None, "기준 제품명 또는 근거가 일치하지 않아 재검토가 필요합니다.")
+
+    def classify_contents(self, items: Sequence[ContentItem], products: Sequence[str]) -> list[RelevanceResult]:
+        results = [RelevanceResult("needs_review", None, "AI 응답을 확인할 수 없어 재검토가 필요합니다.") for _ in items]
+        for offset in range(0, len(items), MAX_CLASSIFICATION_BATCH_SIZE):
+            batch = items[offset:offset + MAX_CLASSIFICATION_BATCH_SIZE]
+            prompt = json.dumps({
+                "task": "classify each content item for direct discussion of allowed products",
+                "allowed_products": list(products),
+                "items": [{"index": index, "title": item.title, "description": item.description,
+                           "platform": item.platform, "provided_product_hint": item.matched_product}
+                          for index, item in enumerate(batch)],
+                "response_schema": {"results": [{"index": 0, "relevance_status": "needs_review",
+                                                   "matched_product": None, "evidence": ""}]},
+            }, ensure_ascii=False)
+            try:
+                raw = self._complete(prompt).removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                payload = json.loads(raw)
+                entries = payload.get("results") if isinstance(payload, dict) else None
+                if not isinstance(entries, list):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, dict) or not isinstance(entry.get("index"), int):
+                        continue
+                    index = entry["index"]
+                    if index < 0 or index >= len(batch):
+                        continue
+                    status, matched, evidence = entry.get("relevance_status"), entry.get("matched_product"), entry.get("evidence")
+                    if status == "irrelevant" and isinstance(evidence, str):
+                        results[offset + index] = RelevanceResult(status, None, evidence or "제품 관련 근거 없음")
+                    elif status == "relevant" and matched in products and isinstance(evidence, str) and evidence.strip():
+                        results[offset + index] = RelevanceResult(status, matched, evidence.strip())
+            except (json.JSONDecodeError, TypeError, ProviderRequestError):
+                continue
+        return results
 
     def convert_document_to_markdown(self, source_name: str, extracted_text: str) -> str:
         return self._complete(json.dumps({

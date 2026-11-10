@@ -47,6 +47,98 @@ def test_claude_invocation_disables_tools_and_extracts_json_result(tmp_path, mon
     assert Path(options["cwd"]).is_relative_to(tmp_path)
 
 
+def test_windows_cli_invocation_hides_console_but_install_login_keeps_new_console(monkeypatch):
+    import subprocess
+    from hospital_marketing.ai.cli_status import check_cli_status
+    import hospital_marketing.ai.cli_status as cli_status
+    calls = []
+    import subprocess as subprocess_module
+    class StartupInfo:
+        dwFlags = 0
+        wShowWindow = 0
+    monkeypatch.setattr(subprocess_module, "STARTUPINFO", StartupInfo, raising=False)
+    monkeypatch.setattr(subprocess_module, "STARTF_USESHOWWINDOW", 1, raising=False)
+    monkeypatch.setattr(subprocess_module, "SW_HIDE", 0, raising=False)
+    monkeypatch.setattr(subprocess_module, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(subprocess_module, "CREATE_NEW_CONSOLE", 0x00000010, raising=False)
+
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.os", SimpleNamespace(name="nt", environ=dict(os.environ)))
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.shutil.which", lambda _name: "C:\\tools\\claude.exe")
+    def fake_run(args, **kwargs):
+        calls.append(kwargs)
+        return _completed("1.0" if "--version" in args else json.dumps({"result": "ok"}))
+    monkeypatch.setattr("hospital_marketing.ai.adapters.local_cli_provider.subprocess.run", fake_run)
+    monkeypatch.setattr("hospital_marketing.ai.cli_status.os", SimpleNamespace(name="nt", environ=dict(os.environ)))
+    monkeypatch.setattr("hospital_marketing.ai.cli_status.find_executable", lambda _cli: "C:\\tools\\claude.exe")
+    terminal_calls = []
+    monkeypatch.setattr(cli_status, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(cli_status.subprocess, "Popen", lambda args, **kwargs: terminal_calls.append((args, kwargs)))
+
+    LocalCLIProvider("claude")._complete("prompt")
+    check_cli_status("claude")
+    cli_status.start_cli_terminal("claude")
+    cli_status.start_cli_terminal("claude", install=True)
+    assert all(call["creationflags"] == subprocess.CREATE_NO_WINDOW for call in calls)
+    assert all(call["startupinfo"].dwFlags & subprocess_module.STARTF_USESHOWWINDOW for call in calls)
+    assert len(terminal_calls) == 2
+    assert all(call[1]["creationflags"] == getattr(subprocess_module, "CREATE_NEW_CONSOLE", 0x00000010) for call in terminal_calls)
+    assert all("startupinfo" not in call[1] for call in terminal_calls)
+
+
+def test_local_cli_batch_classification_marks_missing_or_malformed_results_for_review(monkeypatch):
+    items = [ContentItem("MOCK-001", "YouTube", f"제목{i}", "https://example.test", "", None, None, "pending", None) for i in range(3)]
+    responses = [json.dumps({"results":[{"index":0,"relevance_status":"irrelevant","matched_product":None,"evidence":"없음"},{"index":1,"relevance_status":"relevant","matched_product":"제품","evidence":"확인"}]})]
+    provider = LocalCLIProvider("claude")
+    monkeypatch.setattr(provider, "_complete", lambda _prompt: responses[0])
+    results = provider.classify_contents(items, ("제품",))
+    assert [r.relevance_status for r in results] == ["irrelevant", "relevant", "needs_review"]
+
+
+@pytest.mark.parametrize("response", [
+    "not json",
+    json.dumps({"results": {"index": 0}}),
+    json.dumps({"results": [{"index": 99, "relevance_status": "relevant", "matched_product": "제품", "evidence": "근거"}]}),
+    json.dumps({"results": [{"index": "0", "relevance_status": "relevant", "matched_product": "제품", "evidence": "근거"}]}),
+    json.dumps({"results": [{"index": 0, "relevance_status": "relevant", "matched_product": "다른 제품", "evidence": "근거"}]}),
+])
+def test_local_cli_batch_classification_invalid_responses_need_review(monkeypatch, response):
+    items = [ContentItem("MOCK-001", "YouTube", "제목", "https://example.test", "", None, None, "pending", None)]
+    provider = LocalCLIProvider("claude")
+    monkeypatch.setattr(provider, "_complete", lambda _prompt: response)
+
+    result = provider.classify_contents(items, ("제품",))[0]
+
+    assert result.relevance_status == "needs_review"
+
+
+def test_local_cli_batch_classification_splits_at_twenty_and_offsets_indexes(monkeypatch):
+    items = [ContentItem("MOCK-001", "YouTube", f"제목{i}", "https://example.test", "", None, None, "pending", None) for i in range(25)]
+    prompts = []
+    provider = LocalCLIProvider("claude")
+
+    def complete(prompt):
+        prompts.append(json.loads(prompt))
+        return json.dumps({"results": [{"index": i, "relevance_status": "relevant", "matched_product": "제품", "evidence": f"근거{i}"} for i in range(len(prompts[-1]["items"]))]})
+
+    monkeypatch.setattr(provider, "_complete", complete)
+    results = provider.classify_contents(items, ("제품",))
+
+    assert [len(prompt["items"]) for prompt in prompts] == [20, 5]
+    assert prompts[1]["items"][0]["index"] == 0
+    assert results[20].evidence == "근거0"
+    assert all(result.relevance_status == "relevant" for result in results)
+
+
+def test_local_cli_batch_request_error_marks_entire_batch_for_review(monkeypatch):
+    items = [ContentItem("MOCK-001", "YouTube", f"제목{i}", "https://example.test", "", None, None, "pending", None) for i in range(2)]
+    provider = LocalCLIProvider("claude")
+    monkeypatch.setattr(provider, "_complete", lambda _prompt: (_ for _ in ()).throw(ProviderRequestError("실패")))
+
+    results = provider.classify_contents(items, ("제품",))
+
+    assert [result.relevance_status for result in results] == ["needs_review", "needs_review"]
+
+
 def test_codex_and_gemini_receive_prompt_as_single_argument(tmp_path, monkeypatch):
     calls = []
 
@@ -95,6 +187,15 @@ def test_windows_cmd_receives_untrusted_prompt_only_via_stdin(
     def fake_run(args, **kwargs):
         calls.append((args, kwargs))
         return _completed(json.dumps({"result": "ok"}) if cli == "claude" else "ok")
+
+    import subprocess as subprocess_module
+    class StartupInfo:
+        dwFlags = 0
+        wShowWindow = 0
+    monkeypatch.setattr(subprocess_module, "STARTUPINFO", StartupInfo, raising=False)
+    monkeypatch.setattr(subprocess_module, "STARTF_USESHOWWINDOW", 1, raising=False)
+    monkeypatch.setattr(subprocess_module, "SW_HIDE", 0, raising=False)
+    monkeypatch.setattr(subprocess_module, "CREATE_NO_WINDOW", 0x08000000, raising=False)
 
     monkeypatch.setattr(
         "hospital_marketing.ai.adapters.local_cli_provider.os",

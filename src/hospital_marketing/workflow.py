@@ -49,6 +49,7 @@ class ImportWorkflow:
         model_id: str = "",
         mock_mode: bool = True,
         enabled_extensions: Sequence[str] | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ) -> WorkflowResult:
         source_dir = Path(source_dir)
         target_dir = Path(target_dir)
@@ -83,22 +84,27 @@ class ImportWorkflow:
                 key=len,
                 reverse=True,
             ))
-            for hospital in repository.list_hospitals():
+            hospitals = repository.list_hospitals()
+            for hospital_index, hospital in enumerate(hospitals, 1):
+                contents_to_classify = []
                 for content in repository.list_contents(hospital.hospital_id):
                     if content.relevance_status != "pending":
                         if content.relevance_status == "needs_review":
                             needs_review_count += 1
                         continue
-                    result = provider.classify_content(content, products)
-                    repository.add_content(replace(
-                        content,
-                        relevance_status=result.relevance_status,
-                        matched_product=result.matched_product,
-                        evidence=result.evidence,
-                    ))
-                    classified_count += 1
-                    if result.relevance_status == "needs_review":
-                        needs_review_count += 1
+                    contents_to_classify.append(content)
+                if contents_to_classify:
+                    if on_progress:
+                        on_progress(f"AI 분류 중 · 병원 {hospital_index}/{len(hospitals)}")
+                    batch_method = getattr(provider, "classify_contents", None)
+                    results = (batch_method(contents_to_classify, products) if provider_id == "local-cli" and not mock_mode and batch_method
+                               else [provider.classify_content(content, products) for content in contents_to_classify])
+                    for content, result in zip(contents_to_classify, results):
+                        repository.add_content(replace(content, relevance_status=result.relevance_status,
+                                                       matched_product=result.matched_product, evidence=result.evidence))
+                        classified_count += 1
+                        if result.relevance_status == "needs_review":
+                            needs_review_count += 1
 
             for script in repository.list_scripts():
                 if script.script_text and not script.summary:

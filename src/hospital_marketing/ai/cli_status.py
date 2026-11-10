@@ -70,6 +70,12 @@ def check_cli_status(cli: str) -> CLIStatus:
     if not executable:
         return CLIStatus(False, None, None, f"{cli} CLI가 설치되지 않았습니다.")
     try:
+        run_options = {}
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            run_options = {"creationflags": subprocess.CREATE_NO_WINDOW, "startupinfo": startupinfo}
         completed = subprocess.run(
             _version_command(executable),
             shell=False,
@@ -78,6 +84,7 @@ def check_cli_status(cli: str) -> CLIStatus:
             errors="replace",
             timeout=VERSION_TIMEOUT_SECONDS,
             check=False,
+            **run_options,
         )
     except subprocess.TimeoutExpired:
         return CLIStatus(True, executable, None, f"{cli} 버전 확인 시간이 초과되었습니다.")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import inspect
 import shutil
 from datetime import date
 from dataclasses import replace
@@ -35,6 +36,7 @@ PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
 
 class _ImportWorker(QtCore.QObject):
     finished = QtCore.Signal(object, object)
+    progress = QtCore.Signal(str)
 
     def __init__(self, workflow: ImportWorkflow, source_dir: Path, target_dir: Path, settings: AppSettings):
         super().__init__()
@@ -46,6 +48,9 @@ class _ImportWorker(QtCore.QObject):
     @QtCore.Slot()
     def run(self) -> None:
         try:
+            workflow_options = {}
+            if "on_progress" in inspect.signature(self.workflow.run).parameters:
+                workflow_options["on_progress"] = self.progress.emit
             result = self.workflow.run(
                 self.source_dir,
                 self.target_dir,
@@ -53,6 +58,7 @@ class _ImportWorker(QtCore.QObject):
                 model_id=self.settings.model_id,
                 mock_mode=self.settings.mock_mode,
                 enabled_extensions=self.settings.enabled_extensions,
+                **workflow_options,
             )
         except Exception as exc:
             self.finished.emit(None, exc)
@@ -360,6 +366,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._import_worker.moveToThread(self._import_thread)
         self._import_thread.started.connect(self._import_worker.run)
         self._import_worker.finished.connect(self._on_import_finished)
+        self._import_worker.progress.connect(self.status_label.setText)
         self._import_worker.finished.connect(self._import_thread.quit)
         self._import_worker.finished.connect(self._import_worker.deleteLater)
         self._import_thread.finished.connect(self._cleanup_import_thread)
