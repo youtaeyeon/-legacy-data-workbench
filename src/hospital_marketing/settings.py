@@ -24,6 +24,7 @@ class AppSettings:
     provider_id: str = "local-cli"
     model_id: str = "claude"
     mock_mode: bool = False
+    auto_collect_hospital_channels: bool = True
     enabled_extensions: tuple[str, ...] = SUPPORTED_EXTENSIONS
     product_keywords: tuple[ProductKeyword, ...] = tuple(ProductKeyword(term) for term in DEFAULT_PRODUCTS)
 
@@ -83,6 +84,7 @@ class SettingsStore:
                 provider_id=str(data.get("provider_id") or "mock"),
                 model_id=str(data.get("model_id") or ""),
                 mock_mode=bool(data.get("mock_mode", True)),
+                auto_collect_hospital_channels=bool(data.get("auto_collect_hospital_channels", True)),
                 enabled_extensions=tuple(extensions),
                 product_keywords=product_keywords,
             )

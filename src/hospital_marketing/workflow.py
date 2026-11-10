@@ -10,7 +10,9 @@ from .ai.registry import ProviderRegistry
 from .credentials import CredentialStore
 from .documents.conversion import convert_source_documents
 from .documents.size_warnings import find_large_source_files, large_source_file_issue
-from .domain import ContentScript
+from .domain import Channel, ContentItem, ContentScript
+from .channel_discovery import ChannelDiscoveryService, parse_discovery_response
+from .providers import ProviderRequestError
 from .importer import ImportService
 from .outputs.generate import OutputManifest, generate_outputs
 from .report import ImportReport
@@ -24,6 +26,14 @@ class WorkflowResult:
     outputs: OutputManifest
     classified_count: int
     needs_review_count: int
+    channels_collected: int = 0
+    posts_collected: int = 0
+    channels_needing_review: int = 0
+    channel_failures: int = 0
+    channel_discarded: int = 0
+    channel_failure_details: tuple[dict[str, str], ...] = ()
+    channel_collection_skipped_reason: str = ""
+    channel_collection_cancelled: bool = False
 
 
 class ImportWorkflow:
@@ -50,6 +60,7 @@ class ImportWorkflow:
         mock_mode: bool = True,
         enabled_extensions: Sequence[str] | None = None,
         on_progress: Callable[[str], None] | None = None,
+        cancel_event=None,
     ) -> WorkflowResult:
         source_dir = Path(source_dir)
         target_dir = Path(target_dir)
@@ -63,6 +74,7 @@ class ImportWorkflow:
         repository = self.repository_factory(target_dir / "data" / "app.db")
         repository.initialize()
         try:
+            existing_ids = {hospital.hospital_id for hospital in repository.list_hospitals()}
             report = ImportService(repository).import_folder(
                 source_dir,
                 enabled_extensions=extensions,
@@ -76,6 +88,46 @@ class ImportWorkflow:
             else:
                 api_key = self.credential_store.get(provider_id)
                 provider = self.provider_registry.create(provider_id, api_key=api_key or "", model=model_id)
+
+            channels_collected = posts_collected = channels_needing_review = channel_failures = channel_discarded = 0
+            failure_details: list[dict[str, str]] = []
+            skipped_reason = ""
+            collection_cancelled = False
+            if settings.auto_collect_hospital_channels:
+                discover = getattr(provider, "discover_channels_and_posts", None)
+                supported = callable(discover) and (mock_mode or provider_id == "mock" or
+                             (provider_id == "local-cli" and model_id == "claude"))
+                if not supported:
+                    skipped_reason = "자동 수집은 목업 또는 local-cli claude에서만 지원됩니다."
+                else:
+                    new_hospitals = [hospital for hospital in repository.list_hospitals()
+                                     if hospital.hospital_id not in existing_ids]
+                    service = ChannelDiscoveryService(repository)
+                    for index, hospital in enumerate(new_hospitals, 1):
+                        if cancel_event is not None and cancel_event.is_set():
+                            collection_cancelled = True
+                            break
+                        if on_progress:
+                            on_progress(f"신규 병원 채널·게시물 수집 중 {index}/{len(new_hospitals)} · {hospital.hospital_name}")
+                        try:
+                            channels, posts, discarded = parse_discovery_response(discover(hospital))
+                            channel_discarded += discarded
+                            for candidate in channels:
+                                if candidate.confidence >= 0.7:
+                                    repository.add_auto_channel(Channel(hospital.hospital_id, candidate.platform,
+                                                                        candidate.channel_name, candidate.url))
+                                    channels_collected += 1
+                                else:
+                                    service.save_candidates(hospital.hospital_id, [candidate])
+                                    channels_needing_review += 1
+                            for post in posts:
+                                repository.add_content(ContentItem(hospital.hospital_id, post.platform, post.title,
+                                    post.url, post.summary, post.published_at, None, "pending", None))
+                                posts_collected += 1
+                        except (ProviderRequestError, TimeoutError, OSError) as exc:
+                            channel_failures += 1
+                            failure_details.append({"hospital_id": hospital.hospital_id,
+                                                    "reason": type(exc).__name__})
 
             classified_count = 0
             needs_review_count = 0
@@ -140,13 +192,16 @@ class ImportWorkflow:
                 provider,
                 registered_products=products,
             )
-            self._write_import_report(report, target_dir)
-            return WorkflowResult(report, outputs, classified_count, needs_review_count)
+            result = WorkflowResult(report, outputs, classified_count, needs_review_count, channels_collected,
+                                    posts_collected, channels_needing_review, channel_failures, channel_discarded,
+                                    tuple(failure_details), skipped_reason, collection_cancelled)
+            self._write_import_report(report, target_dir, result)
+            return result
         finally:
             repository.close()
 
     @staticmethod
-    def _write_import_report(report: ImportReport, target_dir: Path) -> Path:
+    def _write_import_report(report: ImportReport, target_dir: Path, result: WorkflowResult | None = None) -> Path:
         path = target_dir / "reports" / "last-import.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -160,6 +215,16 @@ class ImportWorkflow:
             "unchanged_count": report.unchanged_count,
             "missing_hospital_ids": report.missing_hospital_ids,
             "issues": [asdict(issue) for issue in report.issues],
+            "channel_collection": ({
+                "channels_collected": result.channels_collected,
+                "posts_collected": result.posts_collected,
+                "channels_needing_review": result.channels_needing_review,
+                "channel_failures": result.channel_failures,
+                "channel_failure_details": list(result.channel_failure_details),
+                "channel_discarded": result.channel_discarded,
+                "skipped_reason": result.channel_collection_skipped_reason,
+                "cancelled": result.channel_collection_cancelled,
+            } if result else {}),
         }
         temporary = path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -12,7 +12,8 @@ def test_workflow_initial_and_weekly_runs_persist_and_regenerate_outputs(tmp_pat
     build_fixtures(fixtures)
     target = tmp_path / "target"
     settings = SettingsStore(tmp_path / "settings.json")
-    settings.save(AppSettings(source_dir=fixtures / "initial", target_dir=target, mock_mode=True))
+    settings.save(AppSettings(source_dir=fixtures / "initial", target_dir=target, mock_mode=True,
+                             auto_collect_hospital_channels=False))
     workflow = ImportWorkflow(settings_store=settings)
 
     first = workflow.run(fixtures / "initial", target)
@@ -30,6 +31,114 @@ def test_workflow_initial_and_weekly_runs_persist_and_regenerate_outputs(tmp_pat
     report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
     assert report["inserted_count"] == 1
     assert "api_key" not in json.dumps(report)
+
+
+def test_mock_workflow_collects_channels_and_recent_posts_only_for_new_hospitals(tmp_path):
+    from hospital_marketing.repository import Repository
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    target = tmp_path / "target"
+    workflow = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"))
+
+    first = workflow.run(fixtures / "initial", target, mock_mode=True)
+    second = workflow.run(fixtures / "weekly", target, mock_mode=True)
+
+    assert (first.channels_collected, first.posts_collected) == (3, 3)
+    assert (second.channels_collected, second.posts_collected) == (1, 1)
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    assert len(repository.list_channels("MOCK-001")) == 2
+    assert len(repository.list_contents("MOCK-001")) == 3
+    source = repository.connection.execute(
+        "SELECT source FROM channels WHERE hospital_id='MOCK-001' AND url='https://instagram.com/mock-hospital'"
+    ).fetchone()[0]
+    repository.close()
+    assert source == "자동 수집"
+    report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
+    assert report["channel_collection"]["channels_collected"] == 1
+    assert "목업 병원 소식" in (target / "dashboard" / "index.html").read_text(encoding="utf-8")
+    assert "목업 병원 소식" in (target / "wiki" / "MOCK-001.md").read_text(encoding="utf-8")
+
+
+def test_workflow_cancel_event_stops_before_next_hospital(tmp_path):
+    from threading import Event
+    from hospital_marketing.ai.registry import ProviderRegistry
+    from hospital_marketing.ai.mock import MockProvider
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    cancel = Event()
+    calls = []
+    class CancellingProvider(MockProvider):
+        def discover_channels_and_posts(self, hospital):
+            calls.append(hospital.hospital_id)
+            return super().discover_channels_and_posts(hospital)
+    registry = ProviderRegistry({"mock": lambda **_: CancellingProvider()})
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=registry).run(
+        fixtures / "initial", tmp_path / "target", mock_mode=True, cancel_event=cancel,
+        on_progress=lambda _text: cancel.set())
+    assert len(calls) == 1
+    assert result.channel_collection_cancelled
+
+
+def test_channel_discovery_failure_is_recorded_and_other_hospitals_continue(tmp_path):
+    from hospital_marketing.ai.registry import ProviderRegistry
+    from hospital_marketing.ai.mock import MockProvider
+    from hospital_marketing.providers import ProviderRequestError
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    class FailingProvider(MockProvider):
+        def discover_channels_and_posts(self, hospital):
+            if hospital.hospital_id == "MOCK-001":
+                raise ProviderRequestError("provider unavailable")
+            return super().discover_channels_and_posts(hospital)
+    target = tmp_path / "target"
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"),
+                            provider_registry=ProviderRegistry({"mock": lambda **_: FailingProvider()})).run(
+        fixtures / "initial", target, mock_mode=True)
+    report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
+    assert result.channel_failures == 1
+    assert report["channel_collection"]["channel_failure_details"] == [
+        {"hospital_id": "MOCK-001", "reason": "ProviderRequestError"}]
+    assert result.channels_collected > 0
+
+
+def test_low_confidence_channel_is_pending_and_visible_in_wiki_and_dashboard(tmp_path):
+    from hospital_marketing.ai.mock import MockProvider
+    from hospital_marketing.ai.registry import ProviderRegistry
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    class LowConfidenceProvider(MockProvider):
+        def discover_channels_and_posts(self, hospital):
+            return '{"channels":[{"platform":"인스타그램","channel_name":"확인 계정","url":"https://instagram.com/mock-pending","evidence":"목업 근거","confidence":0.6}],"posts":[]}'
+    target = tmp_path / "target"
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"),
+                            provider_registry=ProviderRegistry({"mock": lambda **_: LowConfidenceProvider()})).run(
+        fixtures / "initial", target, mock_mode=True)
+    assert result.channels_needing_review == 3
+    dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
+    assert "확인 계정" in dashboard
+    assert "channel_candidates.map" in dashboard
+    wiki = (target / "wiki" / "MOCK-001.md").read_text(encoding="utf-8")
+    assert "### 확인 필요" in wiki
+    assert "확인 계정" in wiki
+
+
+def test_non_claude_local_cli_reports_auto_collection_skip(tmp_path):
+    from hospital_marketing.ai.mock import MockProvider
+    from hospital_marketing.ai.registry import ProviderRegistry
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"),
+                            provider_registry=ProviderRegistry({"local-cli": lambda **_: MockProvider()})).run(
+        fixtures / "initial", tmp_path / "target", provider_id="local-cli", model_id="codex", mock_mode=False)
+    assert result.channel_failures == 0
+    assert "local-cli claude" in result.channel_collection_skipped_reason
+    report = json.loads((tmp_path / "target" / "reports" / "last-import.json").read_text(encoding="utf-8"))
+    assert report["channel_collection"]["skipped_reason"]
 
 
 def test_workflow_converts_enabled_documents_to_wiki_markdown(tmp_path):

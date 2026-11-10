@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import inspect
-
+from threading import Event
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
@@ -22,12 +22,12 @@ from ..documents.size_warnings import (
     format_large_source_file_prompt,
 )
 from ..settings import AppSettings, SettingsStore
-from ..repository import Repository
+
 from ..version import APP_VERSION
 from ..workflow import ImportWorkflow
 from .settings_dialog import SettingsDialog
 from .product_keywords_dialog import ProductKeywordsDialog
-from .channel_candidates_dialog import ChannelCandidatesDialog
+
 
 PATH_GUIDE_BUTTON_SIZE = 20
 PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
@@ -37,12 +37,13 @@ class _ImportWorker(QtCore.QObject):
     finished = QtCore.Signal(object, object)
     progress = QtCore.Signal(str)
 
-    def __init__(self, workflow: ImportWorkflow, source_dir: Path, target_dir: Path, settings: AppSettings):
+    def __init__(self, workflow: ImportWorkflow, source_dir: Path, target_dir: Path, settings: AppSettings, cancel_event: Event):
         super().__init__()
         self.workflow = workflow
         self.source_dir = source_dir
         self.target_dir = target_dir
         self.settings = settings
+        self.cancel_event = cancel_event
 
     @QtCore.Slot()
     def run(self) -> None:
@@ -50,6 +51,8 @@ class _ImportWorker(QtCore.QObject):
             workflow_options = {}
             if "on_progress" in inspect.signature(self.workflow.run).parameters:
                 workflow_options["on_progress"] = self.progress.emit
+            if "cancel_event" in inspect.signature(self.workflow.run).parameters:
+                workflow_options["cancel_event"] = self.cancel_event
             result = self.workflow.run(
                 self.source_dir,
                 self.target_dir,
@@ -80,8 +83,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dashboard_path: Path | None = None
         self._import_thread: QtCore.QThread | None = None
         self._import_worker: _ImportWorker | None = None
-        self._import_context: tuple[AppSettings, Path, list[LargeSourceFile], set[str]] | None = None
+        self._import_context: tuple[AppSettings, Path, list[LargeSourceFile]] | None = None
         self._close_when_import_finishes = False
+        self._cancel_event = Event()
         self.setWindowTitle(f"병원 마케팅 위키 MVP · v{APP_VERSION}")
         self.resize(900, 500)
         self.setMinimumWidth(780)
@@ -187,16 +191,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.open_dashboard_button.setEnabled(False)
         self.open_dashboard_button.clicked.connect(self._open_dashboard)
         actions.addWidget(self.open_dashboard_button)
-
         self.channel_candidates_button = QtWidgets.QPushButton("온라인 채널 후보")
         self.channel_candidates_button.setObjectName("channel_candidates_button")
         self.channel_candidates_button.clicked.connect(lambda: self._open_channel_candidates())
         actions.addWidget(self.channel_candidates_button)
+
         self.import_progress = QtWidgets.QProgressBar()
         self.import_progress.setObjectName("import_progress")
         self.import_progress.setRange(0, 0)
         self.import_progress.setVisible(False)
         actions.addWidget(self.import_progress)
+        self.cancel_button = QtWidgets.QPushButton("취소")
+        self.cancel_button.setObjectName("cancel_import_button")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_import)
+        actions.addWidget(self.cancel_button)
         layout.addWidget(self.actions_group)
 
         self.status_label = QtWidgets.QLabel("Source와 Target을 정한 뒤 실행하세요.")
@@ -208,32 +217,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if settings.target_dir:
             self._set_dashboard_path(settings.target_dir / "dashboard" / "index.html")
 
-    def _open_channel_candidates(self, hospital_ids: list[str] | None = None) -> None:
-        from ..ai.adapters.local_cli_provider import LocalCLIProvider
-
-        settings = self.settings_store.load()
-        target = settings.target_dir
-        if target is None or settings.provider_id != "local-cli" or settings.model_id != "claude":
-            QtWidgets.QMessageBox.information(
-                self, "채널 찾기 미지원", "채널 찾기는 구독 연동 Claude CLI의 웹 검색만 지원합니다. AI 설정에서 Claude CLI를 선택해 주세요."
-            )
-            return
-        repository = Repository(target / "data" / "app.db")
-        repository.initialize()
-        hospitals = repository.list_hospitals()
-        if hospital_ids is not None:
-            hospitals = [hospital for hospital in hospitals if hospital.hospital_id in hospital_ids]
-        if not hospitals:
-            repository.close()
-            return
-        try:
-            dialog = ChannelCandidatesDialog(
-                repository, LocalCLIProvider("claude"), hospitals, target,
-                batch=hospital_ids is not None, parent=self,
-            )
-            dialog.exec()
-        finally:
-            repository.close()
 
     def _choose_source(self) -> None:
         current = self.source_path_edit.text().strip()
@@ -341,22 +324,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status_label.setText("큰 원본 파일 경고로 처리를 취소했습니다.")
             return
         self.settings_store.save(updated)
-        existing_hospital_ids: set[str] = set()
-        try:
-            before = Repository(target_dir / "data" / "app.db")
-            before.initialize()
-            existing_hospital_ids = {hospital.hospital_id for hospital in before.list_hospitals()}
-            before.close()
-        except Exception:
-            existing_hospital_ids = set()
+        self._cancel_event.clear()
         self.run_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
         self.import_progress.setVisible(True)
         self.status_label.setText(
             f"처리 중 · Source {source_dir} · 선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다."
         )
-        self._import_context = (updated, target_dir, large_source_files, existing_hospital_ids)
+        self._import_context = (updated, target_dir, large_source_files)
         self._import_thread = QtCore.QThread(self)
-        self._import_worker = _ImportWorker(self.workflow, source_dir, target_dir, updated)
+        self._import_worker = _ImportWorker(self.workflow, source_dir, target_dir, updated, self._cancel_event)
         self._import_worker.moveToThread(self._import_thread)
         self._import_thread.started.connect(self._import_worker.run)
         self._import_worker.finished.connect(self._on_import_finished)
@@ -370,10 +347,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_import_finished(self, result, error) -> None:
         self.import_progress.setVisible(False)
         self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
         context = self._import_context
         if context is None:
             return
-        updated, target_dir, large_source_files, existing_hospital_ids = context
+        updated, target_dir, large_source_files = context
         try:
             if error is not None:
                 raise error
@@ -385,8 +363,15 @@ class MainWindow(QtWidgets.QMainWindow):
             status = (
                 f"처리 완료 · Source {report.source_dir or updated.source_dir} · {source_files} · 읽은 파일 {report.files_seen} · Markdown {report.documents_converted_count} · 신규 {report.inserted_count} · 변경 {report.updated_count} · "
                 f"변경 없음 {report.unchanged_count} · 오류 {sum(issue.code != 'large_source_file' for issue in report.issues)} · "
-                f"분류 {result.classified_count} · 검토 필요 {result.needs_review_count}"
+                f"분류 {result.classified_count} · 검토 필요 {result.needs_review_count} · "
+                f"자동 수집 채널 {result.channels_collected} · 게시물 {result.posts_collected} · "
+                f"채널 확인 필요 {result.channels_needing_review} · 수집 실패 병원 {result.channel_failures} · "
+                f"폐기 항목 {result.channel_discarded}"
             )
+            if result.channel_collection_skipped_reason:
+                status += f" · {result.channel_collection_skipped_reason}"
+            if result.channel_collection_cancelled:
+                status += " · 자동 수집 취소됨"
             if report.inserted_count == 0 and report.updated_count == 0 and report.unchanged_count > 0:
                 status += " · 이미 가져온 파일과 같습니다. Source 폴더를 확인하세요."
             if report.files_seen == 0:
@@ -405,21 +390,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
-            new_hospital_ids: list[str] = []
-            if report.inserted_count and updated.provider_id == "local-cli" and updated.model_id == "claude":
-                current = Repository(target_dir / "data" / "app.db")
-                current.initialize()
-                new_hospital_ids = [hospital.hospital_id for hospital in current.list_hospitals()
-                                    if hospital.hospital_id not in existing_hospital_ids]
-                current.close()
-            if new_hospital_ids and not self._close_when_import_finishes:
-                answer = QtWidgets.QMessageBox.question(
-                    self, "신규 병원 온라인 채널", f"신규 병원 {len(new_hospital_ids)}곳의 채널을 찾을까요?",
-                    QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-                    QtWidgets.QMessageBox.StandardButton.No,
-                )
-                if answer == QtWidgets.QMessageBox.StandardButton.Yes:
-                    self._open_channel_candidates(new_hospital_ids)
         except (ProviderConfigurationError, ProviderRequestError) as exc:
             safe_message = sanitize_provider_error_message(str(exc))
             self.status_label.setText(f"AI 처리 실패: {safe_message} 목업 모드로 다시 실행할 수 있습니다.")
@@ -436,8 +406,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._close_when_import_finishes:
             self.close()
 
+    def _cancel_import(self) -> None:
+        self._cancel_event.set()
+        self.cancel_button.setEnabled(False)
+        self.status_label.setText("현재 처리 중인 작업이 끝나면 자동 수집을 취소합니다.")
+
     def closeEvent(self, event) -> None:
         if self._import_thread is not None and self._import_thread.isRunning():
+            self._cancel_event.set()
             self._close_when_import_finishes = True
             self.status_label.setText("가져오기가 끝난 뒤 앱이 종료됩니다.")
             event.ignore()
