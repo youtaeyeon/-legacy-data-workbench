@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from datetime import date
-
-from .domain import Channel, ContentItem, Hospital
+from .domain import Channel, Hospital
 from .providers import ProviderRequestError
 from .repository import Repository
 

@@ -125,25 +125,11 @@ def test_main_window_no_longer_shows_channel_candidate_button(tmp_path):
 
 
 def test_import_does_not_prompt_to_start_channel_search(tmp_path, monkeypatch):
-    from datetime import date
-    from hospital_marketing.domain import Hospital
-    import hospital_marketing.ui.main_window as main_window_module
-
     _app()
     target = tmp_path / "target"
     settings_store = SettingsStore(tmp_path / "settings.json")
     settings_store.save(AppSettings(target_dir=target, provider_id="local-cli", model_id="claude"))
-    existing = Hospital("EXISTING", "기존 병원", "가상 지역")
-    new_one = Hospital("NEW", "신규 병원", "가상 지역", date(2026, 1, 1))
 
-    class FakeRepository:
-        instances = 0
-        def __init__(self, _path): type(self).instances += 1
-        def initialize(self): pass
-        def list_hospitals(self): return [existing] if self.instances == 1 else [existing, new_one]
-        def close(self): pass
-
-    monkeypatch.setattr(main_window_module, "Repository", FakeRepository)
     prompts = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda _p, _t, text, *_a: prompts.append(text) or QtWidgets.QMessageBox.StandardButton.Yes)
     window = MainWindow(settings_store, FakeWorkflow(target / "dashboard" / "index.html"))
@@ -863,8 +849,7 @@ def test_closing_during_import_waits_for_completion_without_channel_prompt(tmp_p
     target = tmp_path / "target"
     settings_store = SettingsStore(tmp_path / "settings.json")
     settings_store.save(AppSettings(target_dir=target, provider_id="local-cli", model_id="claude"))
-    existing = Hospital("EXISTING", "기존 병원", "가상 지역")
-    new_hospital = Hospital("NEW", "신규 병원", "가상 지역", date(2026, 1, 1))
+
 
     class BlockingWorkflow(FakeWorkflow):
         def run(self, *args, **kwargs):
@@ -872,23 +857,7 @@ def test_closing_during_import_waits_for_completion_without_channel_prompt(tmp_p
             assert release.wait(5)
             return super().run(*args, **kwargs)
 
-    class FakeRepository:
-        instances = 0
-
-        def __init__(self, _path):
-            type(self).instances += 1
-
-        def initialize(self):
-            pass
-
-        def list_hospitals(self):
-            return [existing] if self.instances == 1 else [existing, new_hospital]
-
-        def close(self):
-            pass
-
     prompts = []
-    monkeypatch.setattr(main_window_module, "Repository", FakeRepository)
     monkeypatch.setattr(
         QtWidgets.QMessageBox,
         "question",

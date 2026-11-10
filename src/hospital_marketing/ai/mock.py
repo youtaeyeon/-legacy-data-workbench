@@ -19,7 +19,7 @@ class MockProvider:
         return RelevanceResult("irrelevant", None, "제품명이 확인되지 않아 관련 콘텐츠에서 제외")
 
     def discover_channels_and_posts(self, hospital: Hospital) -> str:
-        return '{"channels":[{"platform":"인스타그램","channel_name":"목업 공식 계정","url":"https://instagram.com/mock-hospital","evidence":"가상 목업 병원 채널","confidence":0.9}],"posts":[{"platform":"인스타그램","title":"목업 병원 소식","url":"https://instagram.com/p/mock-hospital-1","published_at":"2026-11-01","summary":"가상 목업 게시물입니다. 실제 병원 정보와 무관합니다.","channel_url":"https://instagram.com/mock-hospital"}]}'
+        return '{"channels":[{"platform":"인스타그램","channel_name":"목업 공식 계정","url":"https://instagram.com/mock-hospital","evidence":"가상 목업 병원 채널","confidence":0.9}],"posts":[{"platform":"인스타그램","title":"울트라클리어 목업 병원 소식","url":"https://instagram.com/p/mock-hospital-1","published_at":"2026-11-01","summary":"울트라클리어 가상 목업 게시물입니다. 실제 병원 정보와 무관합니다.","channel_url":"https://instagram.com/mock-hospital"}]}'
 
     def summarize_script(self, script_text: str) -> str:
         sentence = script_text.strip().splitlines()[0][:120] if script_text.strip() else ""

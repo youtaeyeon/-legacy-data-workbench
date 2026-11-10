@@ -1,5 +1,8 @@
 import json
+import os
 import subprocess
+
+import pytest
 
 from hospital_marketing.ai.adapters.local_cli_provider import LocalCLIProvider
 from hospital_marketing.domain import Hospital
@@ -49,3 +52,14 @@ def test_parse_discovery_response_keeps_valid_channels_and_posts_independently()
     assert [item.url for item in channels] == ["https://instagram.com/mock"]
     assert [item.url for item in posts] == ["https://instagram.com/p/1"]
     assert discarded == 2
+
+
+@pytest.mark.live
+def test_live_public_hospital_discovery_response_shape():
+    if os.environ.get("HOSPITAL_MARKETING_LIVE") != "1":
+        pytest.skip("명시적 live 테스트 실행 설정이 없습니다.")
+    channels, posts, _discarded = parse_discovery_response(
+        LocalCLIProvider("claude").discover_channels_and_posts(
+            Hospital("LIVE-001", "서울대학교병원", "서울특별시 종로구")))
+    assert isinstance(channels, list)
+    assert isinstance(posts, list)

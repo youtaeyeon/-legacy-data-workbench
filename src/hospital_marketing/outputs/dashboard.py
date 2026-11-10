@@ -22,6 +22,7 @@ def _record(repository: Repository, hospital: Hospital, scripts: dict[str, Conte
     materials = repository.list_materials(hospital.hospital_id)
     channels = repository.list_channels(hospital.hospital_id)
     contents = repository.list_contents(hospital.hospital_id)
+    candidates = repository.list_channel_candidates(hospital.hospital_id, "pending")
     return {
         "hospital_id": hospital.hospital_id,
         "hospital_name": hospital.hospital_name,
@@ -39,6 +40,11 @@ def _record(repository: Repository, hospital: Hospital, scripts: dict[str, Conte
         "channels": [
             {"platform": item.platform, "channel_name": item.channel_name, "url": _safe_url(item.url)}
             for item in channels if _safe_url(item.url)
+        ],
+        "channel_candidates": [
+            {"platform": item["platform"], "channel_name": item["channel_name"],
+             "url": _safe_url(item["url"]), "confidence": item["confidence"]}
+            for item in candidates if _safe_url(item["url"])
         ],
         "contents": [
             {"platform": item.platform, "title": item.title, "url": _safe_url(item.url), "matched_product": item.matched_product or "", "published_at": item.published_at.isoformat() if item.published_at else "", "evidence": item.evidence or "", "script_text": scripts[item.url].script_text if item.url in scripts else "", "script_summary": scripts[item.url].summary if item.url in scripts else "", "usage_status": scripts[item.url].usage_status if item.url in scripts else "미활용", "has_script": bool(scripts.get(item.url) and scripts[item.url].script_text)}
@@ -277,7 +283,7 @@ h2{font-size:20px;font-weight:700;margin:36px 0 12px;padding-bottom:6px;border-b
     for (const h of hospitals) {
       const row = el('tr'); hospitalCell(row, h);
       listCell(row, h.materials, (node, item) => { node.textContent = `${item.product_name} · ${item.material_name} · 수량 ${item.quantity} · ${item.status}`; });
-      listCell(row, h.channels, (node, item) => node.append(link(`${item.platform} · ${item.channel_name}`, item.url)));
+      listCell(row, [...h.channels, ...h.channel_candidates.map(item => ({...item, channel_name: `확인 필요 · ${item.channel_name}`}))], (node, item) => node.append(link(`${item.platform} · ${item.channel_name}`, item.url)));
       listCell(row, h.contents, (node, item) => node.append(link(`${item.platform} · ${item.title}`, item.url)));
       tableBody.append(row);
     }

@@ -47,6 +47,7 @@ def generate_outputs(
             repository.list_contents(hospital.hospital_id),
             provider,
             scripts=scripts_by_hospital.get(hospital.hospital_id, []),
+            channel_candidates=[dict(row) for row in repository.list_channel_candidates(hospital.hospital_id, "pending")],
         )
         path.write_text(content, encoding="utf-8")
         markdown_files.append(path)
