@@ -29,6 +29,7 @@ def render_hospital_markdown(
     provider: AIProvider | None = None,
     *,
     scripts: list[dict] | None = None,
+    channel_candidates: list[dict] | None = None,
 ) -> str:
     provider = provider or MockProvider()
     relevant = [item for item in contents if item.relevance_status == "relevant"]
@@ -64,6 +65,11 @@ def render_hospital_markdown(
         lines.extend(f"- [{_text(channel.platform)} · {_text(channel.channel_name)}]({_safe_url(channel.url)})" for channel in valid_channels)
     else:
         lines.append("등록된 온라인 채널이 없습니다.")
+    candidates = channel_candidates or []
+    if candidates:
+        lines.extend(["", "### 확인 필요", ""])
+        lines.extend(f"- {_text(item['platform'])} · {_text(item['channel_name'])} · 신뢰도 {item['confidence']:.1f}"
+                     for item in candidates if _safe_url(item['url']))
     lines.extend(["", "## 제품 관련 콘텐츠", ""])
     if relevant:
         for item in relevant:
