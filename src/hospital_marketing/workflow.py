@@ -191,6 +191,7 @@ class ImportWorkflow:
                 target_dir,
                 provider,
                 registered_products=products,
+                import_report=report,
             )
             result = WorkflowResult(report, outputs, classified_count, needs_review_count, channels_collected,
                                     posts_collected, channels_needing_review, channel_failures, channel_discarded,
@@ -213,6 +214,8 @@ class ImportWorkflow:
             "inserted_count": report.inserted_count,
             "updated_count": report.updated_count,
             "unchanged_count": report.unchanged_count,
+            "inserted_hospital_ids": report.inserted_hospital_ids,
+            "updated_hospital_ids": report.updated_hospital_ids,
             "missing_hospital_ids": report.missing_hospital_ids,
             "issues": [asdict(issue) for issue in report.issues],
             "channel_collection": ({

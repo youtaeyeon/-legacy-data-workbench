@@ -224,12 +224,16 @@ class ImportService:
             report.inserted_count = 0
             report.updated_count = 0
             report.unchanged_count = 0
+            report.inserted_hospital_ids.clear()
+            report.updated_hospital_ids.clear()
             report.files_failed += 1
             report.issues.append(ImportIssue(source_dir.name, None, None, None, "database_error", "저장 중 데이터베이스 오류가 발생해 이번 가져오기 전체를 취소했습니다."))
         except Exception:
             report.inserted_count = 0
             report.updated_count = 0
             report.unchanged_count = 0
+            report.inserted_hospital_ids.clear()
+            report.updated_hospital_ids.clear()
             report.files_failed += 1
             report.issues.append(ImportIssue(source_dir.name, None, None, None, "import_error", "가져오기 중 예상하지 못한 오류가 발생해 이번 가져오기 전체를 취소했습니다."))
         return report
@@ -240,6 +244,8 @@ class ImportService:
             if stored is None:
                 self.repository.upsert_hospital(incoming_hospital)
                 report.inserted_count += 1
+                if incoming_hospital.hospital_id not in report.inserted_hospital_ids:
+                    report.inserted_hospital_ids.append(incoming_hospital.hospital_id)
                 continue
             merged = Hospital(
                 hospital_id=incoming_hospital.hospital_id,
@@ -256,6 +262,8 @@ class ImportService:
             for change in changes:
                 self.repository.record_change(change)
             report.updated_count += 1
+            if incoming_hospital.hospital_id not in report.updated_hospital_ids:
+                report.updated_hospital_ids.append(incoming_hospital.hospital_id)
 
     def _import_details(
         self, files: list[Path], report: ImportReport, source_dir: Path
@@ -296,7 +304,7 @@ class ImportService:
                                 continue
                             content_url_raw = _cell(row, headers, "content_url")
                             content_url = str(content_url_raw).strip() if content_url_raw is not None else ""
-                            linked = self.repository.connection.execute("SELECT 1 FROM contents WHERE url=?", (content_url,)).fetchone() if content_url else None
+                            linked = self.repository.connection.execute("SELECT hospital_id FROM contents WHERE url=?", (content_url,)).fetchone() if content_url else None
                             if not linked:
                                 report.issues.append(ImportIssue(file_name, sheet_name, row_number, "content_url", "unknown_content_url", "연결된 콘텐츠 URL을 찾을 수 없어 행을 건너뛰었습니다."))
                                 continue
@@ -308,6 +316,9 @@ class ImportService:
                                 ))
                                 if changed:
                                     report.updated_count += 1
+                                    hospital_id = linked["hospital_id"]
+                                    if hospital_id not in report.updated_hospital_ids:
+                                        report.updated_hospital_ids.append(hospital_id)
                             except (TypeError, ValueError) as exc:
                                 report.issues.append(ImportIssue(file_name, sheet_name, row_number, None, "invalid_value", str(exc)))
                             continue

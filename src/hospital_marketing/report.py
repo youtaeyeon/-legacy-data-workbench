@@ -21,6 +21,8 @@ class ImportReport:
     inserted_count: int = 0
     updated_count: int = 0
     unchanged_count: int = 0
+    inserted_hospital_ids: list[str] = field(default_factory=list)
+    updated_hospital_ids: list[str] = field(default_factory=list)
     missing_hospital_ids: list[str] = field(default_factory=list)
     issues: list[ImportIssue] = field(default_factory=list)
 

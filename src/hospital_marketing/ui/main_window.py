@@ -191,10 +191,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.open_dashboard_button.setEnabled(False)
         self.open_dashboard_button.clicked.connect(self._open_dashboard)
         actions.addWidget(self.open_dashboard_button)
-        self.channel_candidates_button = QtWidgets.QPushButton("온라인 채널 후보")
-        self.channel_candidates_button.setObjectName("channel_candidates_button")
-        self.channel_candidates_button.clicked.connect(lambda: self._open_channel_candidates())
-        actions.addWidget(self.channel_candidates_button)
 
         self.import_progress = QtWidgets.QProgressBar()
         self.import_progress.setObjectName("import_progress")

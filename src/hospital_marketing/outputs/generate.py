@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from ..ai.base import AIProvider
 from ..ai.mock import MockProvider
 from ..repository import Repository
+from ..report import ImportReport
 from ..settings import DEFAULT_PRODUCTS
 from .dashboard import render_dashboard
 from .excel import export_marketing_excel
@@ -27,6 +28,7 @@ def generate_outputs(
     provider: AIProvider | None = None,
     *,
     registered_products: Sequence[str] = DEFAULT_PRODUCTS,
+    import_report: ImportReport | None = None,
 ) -> OutputManifest:
     target_dir = Path(target_dir)
     wiki_dir = target_dir / "wiki"
@@ -55,6 +57,7 @@ def generate_outputs(
         repository,
         target_dir / "dashboard" / "index.html",
         registered_products=registered_products,
+        import_report=import_report,
     )
     excel = export_marketing_excel(repository, target_dir / "exports" / "marketing.xlsx")
     return OutputManifest(markdown_files, dashboard, excel)

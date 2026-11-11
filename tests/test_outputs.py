@@ -11,6 +11,7 @@ from hospital_marketing.domain import Channel, ContentItem, ContentScript, Equip
 from hospital_marketing.outputs.generate import generate_outputs
 from hospital_marketing.outputs.dashboard import render_dashboard
 from hospital_marketing.repository import Repository
+from hospital_marketing.report import ImportReport
 from hospital_marketing.settings import DEFAULT_PRODUCTS
 
 
@@ -129,6 +130,36 @@ def test_dashboard_uses_reference_layout_and_only_available_hospital_fields(tmp_
     repository.close()
 
 
+def test_dashboard_separates_summary_and_hospital_management_and_includes_import_summary(tmp_path):
+    repository = _repository(tmp_path)
+    report = ImportReport(
+        inserted_count=1,
+        updated_count=1,
+        unchanged_count=2,
+        inserted_hospital_ids=["MOCK-002"],
+        updated_hospital_ids=["MOCK-001"],
+    )
+    repository.upsert_hospital(Hospital("MOCK-002", "목업 신규 병원", "가상권역 B"))
+
+    dashboard = render_dashboard(repository, tmp_path / "dashboard.html", import_report=report)
+
+    html = dashboard.read_text(encoding="utf-8")
+    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
+    data = json.loads(payload)
+    assert 'id="dashboard-summary"' in html
+    assert 'id="hospital-management"' in html
+    assert data["import_summary"] == {
+        "inserted_count": 1,
+        "updated_count": 1,
+        "unchanged_count": 2,
+        "inserted_hospital_ids": ["MOCK-002"],
+        "updated_hospital_ids": ["MOCK-001"],
+    }
+    assert 'data-view="dashboard"' in html and 'data-view="hospitals"' in html
+    assert "채널 확인 필요" in html
+    repository.close()
+
+
 def test_dashboard_reference_is_preserved_under_docs_design():
     reference = Path(__file__).resolve().parents[1] / "docs" / "design" / "dashboard-reference.html"
 
@@ -237,4 +268,6 @@ def test_direct_dashboard_render_defaults_to_existing_products(tmp_path):
     html = dashboard.read_text(encoding="utf-8")
     payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
     assert json.loads(payload)["product_keywords"] == list(DEFAULT_PRODUCTS)
+    assert 'id="dashboard-summary"' in html and 'id="hospital-management"' in html
+    assert "가져오기 기록이 없습니다." in html
     repository.close()

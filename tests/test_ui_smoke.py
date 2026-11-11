@@ -117,10 +117,10 @@ def test_main_window_persists_paths_runs_workflow_and_shows_counts(tmp_path):
     assert not hasattr(window, "export_dashboard_button")
 
 
-def test_main_window_keeps_channel_candidate_button(tmp_path):
+def test_main_window_no_longer_shows_channel_candidate_button(tmp_path):
     _app()
     window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "dashboard.html"))
-    assert window.channel_candidates_button.objectName() == "channel_candidates_button"
+    assert not hasattr(window, "channel_candidates_button")
     window.close()
 
 
