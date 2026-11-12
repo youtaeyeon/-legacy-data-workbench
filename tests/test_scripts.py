@@ -110,7 +110,8 @@ def test_generates_deterministic_script_files_index_wiki_links_and_standalone_da
     html = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
     assert "✍️ 콘텐츠 제작" in html
     assert "navigator.clipboard" in html
-    assert "function renderScripts(hospitals)" in html
+    assert 'id="script-modal"' in html
+    assert "openScript=(h,c)" in html
     assert "스크립트 수집 전" in html
     assert "원문에서 보기" in html
     assert "병원 영상·글은 병원의 저작물이므로 SNS 활용 시 사전 허락과 출처 표기가 필요합니다." in html

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import os
 import inspect
-import shutil
 from threading import Event
-from datetime import date
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
@@ -193,12 +191,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.open_dashboard_button.setEnabled(False)
         self.open_dashboard_button.clicked.connect(self._open_dashboard)
         actions.addWidget(self.open_dashboard_button)
-        self.export_dashboard_button = QtWidgets.QPushButton("대시보드 HTML 내보내기")
-        self.export_dashboard_button.setObjectName("export_dashboard_button")
-        self.export_dashboard_button.setEnabled(False)
-        self.export_dashboard_button.setToolTip("내보낸 파일에는 병원 정보가 포함될 수 있으므로 외부 공유 전 내용을 확인하세요.")
-        self.export_dashboard_button.clicked.connect(self._export_dashboard)
-        actions.addWidget(self.export_dashboard_button)
 
         self.import_progress = QtWidgets.QProgressBar()
         self.import_progress.setObjectName("import_progress")
@@ -398,11 +390,9 @@ class MainWindow(QtWidgets.QMainWindow):
             safe_message = sanitize_provider_error_message(str(exc))
             self.status_label.setText(f"AI 처리 실패: {safe_message} 목업 모드로 다시 실행할 수 있습니다.")
             self.open_dashboard_button.setEnabled(False)
-            self.export_dashboard_button.setEnabled(False)
         except Exception:
             self.status_label.setText("처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요.")
             self.open_dashboard_button.setEnabled(False)
-            self.export_dashboard_button.setEnabled(False)
 
     @QtCore.Slot()
     def _cleanup_import_thread(self) -> None:
@@ -439,62 +429,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dashboard_path = Path(path)
         available = self.dashboard_path.is_file()
         self.open_dashboard_button.setEnabled(available)
-        self.export_dashboard_button.setEnabled(available)
 
     def _open_dashboard(self) -> None:
         if self.dashboard_path and self.dashboard_path.is_file():
             self.open_path(self.dashboard_path)
 
-    def _export_dashboard(self) -> None:
-        if not self.dashboard_path or not self.dashboard_path.is_file():
-            self.export_dashboard_button.setEnabled(False)
-            self.status_label.setText("내보낼 대시보드 파일이 없습니다. 먼저 위키 생성을 실행해 주세요.")
-            return
-
-        documents = QtCore.QStandardPaths.writableLocation(
-            QtCore.QStandardPaths.StandardLocation.DocumentsLocation
-        )
-        default_directory = Path(documents) if documents else Path.home()
-        default_path = default_directory / f"병원마케팅대시보드_{date.today():%Y%m%d}.html"
-        self.status_label.setText("외부 공유 전에 실제 회사 자료가 포함되지 않았는지 확인하세요.")
-        selected_path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "대시보드 HTML 내보내기",
-            str(default_path),
-            "HTML 파일 (*.html)",
-        )
-        if not selected_path:
-            return
-
-        destination = Path(selected_path)
-        if destination.suffix in {"", "."}:
-            destination = destination.with_name(f"{destination.name.rstrip('.')}.html")
-        elif destination.suffix.lower() != ".html":
-            self.status_label.setText("공유용 대시보드 파일은 .html 확장자로 저장해 주세요.")
-            return
-        if self.dashboard_path.resolve() == destination.resolve():
-            self.status_label.setText(f"이미 대시보드 HTML입니다: {destination}")
-            return
-        if destination.exists():
-            answer = QtWidgets.QMessageBox.question(
-                self,
-                "덮어쓰기 확인",
-                f"{destination} 파일이 이미 있습니다. 덮어쓸까요?",
-                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-                QtWidgets.QMessageBox.StandardButton.No,
-            )
-            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-                self.status_label.setText("대시보드 내보내기를 취소했습니다.")
-                return
-        try:
-            shutil.copyfile(self.dashboard_path, destination)
-        except OSError:
-            self.status_label.setText("HTML 내보내기에 실패했습니다. 저장 위치와 권한을 확인해 주세요.")
-            return
-
-        self.status_label.setText(
-            f"공유용 HTML 저장 완료: {destination} · 외부 공유 전에 실제 회사 자료가 포함되지 않았는지 확인하세요."
-        )
 
     @staticmethod
     def _open_local_path(path: Path) -> None:

@@ -37,6 +37,8 @@ def test_weekly_import_adds_updates_and_preserves_missing_existing_hospital(tmp_
     report = service.import_folder(tmp_path / "fixtures" / "weekly")
 
     assert (report.inserted_count, report.updated_count, report.unchanged_count) == (1, 1, 1)
+    assert report.inserted_hospital_ids == ["MOCK-004"]
+    assert report.updated_hospital_ids == ["MOCK-001"]
     assert report.missing_hospital_ids == ["MOCK-003"]
     assert repository.get_hospital("MOCK-001").region == "가상권역 D"
     assert repository.get_hospital("MOCK-003") is not None

@@ -22,6 +22,8 @@ def test_sample_contract_folders_import_incrementally(tmp_path):
         assert report.issues == [], folder
         assert report.files_failed == 0, folder
         assert (report.inserted_count, report.updated_count, report.unchanged_count) == (inserted, updated, unchanged), folder
+        assert len(report.inserted_hospital_ids) == inserted, folder
+        assert len(report.updated_hospital_ids) == updated, folder
         assert report.missing_hospital_ids == [], folder
 
     assert len(list((target / "wiki").glob("HM-*.md"))) == 21
