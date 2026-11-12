@@ -100,6 +100,9 @@ class MainWindow(QtWidgets.QMainWindow):
             QGroupBox { border: 1px solid rgba(9,34,63,0.18); border-radius: 6px; margin-top: 12px; padding: 18px 14px 12px; font-weight: 600; color: #000000; }
             QGroupBox::title { subcontrol-origin: margin; left: 14px; padding: 0 6px; color: #000000; }
             QLabel#source_label, QLabel#target_label { color: #000000; }
+            QLabel#import_progress_label { color: #000000; }
+            QProgressBar#import_progress { color: #000000; text-align: center; border: 1px solid rgba(9,34,63,0.2); border-radius: 5px; background: #faf7ee; }
+            QProgressBar#import_progress::chunk { background: #9fc0e8; border-radius: 4px; }
             QLineEdit { min-height: 34px; border: 1px solid rgba(9,34,63,0.2); border-radius: 4px; padding: 4px 8px; background: #faf7ee; color: #000000; }
             QCheckBox { color: #000000; }
             QPushButton { min-height: 36px; border: 1px solid rgba(9,34,63,0.18); border-radius: 4px; padding: 4px 14px; background: #faf7ee; color: #09223f; }
