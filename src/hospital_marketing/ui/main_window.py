@@ -512,7 +512,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"AI 입력 한도를 넘을 수 있습니다.\n{details}"
                     )
             self.status_label.setText(status)
-            if not updated.mock_mode:
+            if not updated.mock_mode and result.classified_count > 0:
                 self._record_ai_connection_check(updated, True)
             self._set_dashboard_path(self.dashboard_path)
             self.import_progress.setValue(100)
