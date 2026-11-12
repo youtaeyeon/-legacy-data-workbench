@@ -163,6 +163,25 @@ def test_dashboard_separates_summary_and_hospital_management_and_includes_import
     repository.close()
 
 
+def test_dashboard_motion_supports_view_tabs_lists_modals_counters_and_reduced_motion(tmp_path):
+    repository = _repository(tmp_path)
+
+    dashboard = render_dashboard(repository, tmp_path / "dashboard.html")
+
+    html = dashboard.read_text(encoding="utf-8")
+    assert html.count("<script>") == 1
+    assert "stopImmediatePropagation" not in html
+    assert "prefers-reduced-motion:reduce" in html
+    assert "matchMedia('(prefers-reduced-motion: reduce)')" in html
+    assert "document.startViewTransition" in html
+    assert "view-transition-name" in html
+    assert 'class="tab-underline"' in html
+    assert "requestAnimationFrame" in html and "countUp" in html
+    assert "modal-opening" in html and "modal-closing" in html
+    assert "animationDelay" in html and "Math.min(index,19)" in html
+    repository.close()
+
+
 def test_dashboard_reference_is_preserved_under_docs_design():
     reference = Path(__file__).resolve().parents[1] / "docs" / "design" / "dashboard-reference.html"
 
