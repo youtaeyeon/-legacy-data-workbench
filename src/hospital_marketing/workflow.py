@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Callable
 
 from .ai.registry import ProviderRegistry
+from .ai.mock import MockProvider
 from .credentials import CredentialStore
 from .documents.conversion import convert_source_documents
 from .documents.size_warnings import find_large_source_files, large_source_file_issue
@@ -34,6 +35,7 @@ class WorkflowResult:
     channel_failure_details: tuple[dict[str, str], ...] = ()
     channel_collection_skipped_reason: str = ""
     channel_collection_cancelled: bool = False
+    cancelled_stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,7 @@ class ImportWorkflow:
             failure_details: list[dict[str, str]] = []
             skipped_reason = ""
             collection_cancelled = False
+            cancelled_stage = None
             if settings.auto_collect_hospital_channels:
                 discover = getattr(provider, "discover_channels_and_posts", None)
                 supported = callable(discover) and (mock_mode or provider_id == "mock" or
@@ -154,6 +157,7 @@ class ImportWorkflow:
                     for index, hospital in enumerate(new_hospitals, 1):
                         if cancel_event is not None and cancel_event.is_set():
                             collection_cancelled = True
+                            cancelled_stage = "channels"
                             break
                         report_progress("channels", index, len(new_hospitals), f"신규 병원 채널·게시물 수집 · {index}/{len(new_hospitals)} · {hospital.hospital_name}")
                         try:
@@ -185,6 +189,9 @@ class ImportWorkflow:
             ))
             hospitals = repository.list_hospitals()
             for hospital_index, hospital in enumerate(hospitals, 1):
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled_stage = cancelled_stage or "classification"
+                    break
                 contents_to_classify = []
                 for content in repository.list_contents(hospital.hospital_id):
                     if content.relevance_status != "pending":
@@ -194,6 +201,9 @@ class ImportWorkflow:
                     contents_to_classify.append(content)
                 if contents_to_classify:
                     report_progress("classification", hospital_index, len(hospitals), f"AI 콘텐츠 분류 · 병원 {hospital_index}/{len(hospitals)} · {hospital.hospital_name}")
+                    if cancel_event is not None and cancel_event.is_set():
+                        cancelled_stage = cancelled_stage or "classification"
+                        break
                     batch_method = getattr(provider, "classify_contents", None)
                     results = (batch_method(contents_to_classify, products) if provider_id == "local-cli" and not mock_mode and batch_method
                                else [provider.classify_content(content, products) for content in contents_to_classify])
@@ -205,6 +215,9 @@ class ImportWorkflow:
                             needs_review_count += 1
 
             for script in repository.list_scripts():
+                if cancel_event is not None and cancel_event.is_set():
+                    cancelled_stage = cancelled_stage or "summaries"
+                    break
                 if script.script_text and not script.summary:
                     repository.upsert_script(replace(script, summary=provider.summarize_script(script.script_text)))
 
@@ -212,7 +225,7 @@ class ImportWorkflow:
             outputs = generate_outputs(
                 repository,
                 target_dir,
-                provider,
+                MockProvider() if cancel_event is not None and cancel_event.is_set() else provider,
                 registered_products=products,
                 import_report=report,
                 on_progress=lambda current, total, name: report_progress("outputs", current, total, f"위키·대시보드·엑셀 생성 · {current}/{total} · {name}"),
@@ -220,7 +233,7 @@ class ImportWorkflow:
             report_progress("outputs", max(len(output_hospitals), 1), max(len(output_hospitals), 1), "위키·대시보드·엑셀 생성 완료")
             result = WorkflowResult(report, outputs, classified_count, needs_review_count, channels_collected,
                                     posts_collected, channels_needing_review, channel_failures, channel_discarded,
-                                    tuple(failure_details), skipped_reason, collection_cancelled)
+                                    tuple(failure_details), skipped_reason, collection_cancelled, cancelled_stage)
             self._write_import_report(report, target_dir, result)
             return result
         finally:
@@ -252,6 +265,7 @@ class ImportWorkflow:
                 "channel_discarded": result.channel_discarded,
                 "skipped_reason": result.channel_collection_skipped_reason,
                 "cancelled": result.channel_collection_cancelled,
+                "cancelled_stage": result.cancelled_stage,
             } if result else {}),
         }
         temporary = path.with_suffix(".json.tmp")

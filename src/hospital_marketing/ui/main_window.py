@@ -333,6 +333,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.settings_store.save(updated)
         self._cancel_event.clear()
+        self.open_dashboard_button.setEnabled(False)
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.import_progress.setVisible(True)
@@ -402,6 +403,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
+            if result.cancelled_stage:
+                stage = {
+                    "files": "파일 읽기",
+                    "channels": "채널 수집",
+                    "classification": "AI 분류",
+                    "summaries": "요약 생성",
+                    "outputs": "산출물 생성",
+                }.get(result.cancelled_stage, result.cancelled_stage)
+                self.status_label.setText(f"취소됨 · {stage} · 처리된 결과까지 저장했습니다")
             self.import_progress.setValue(100)
             self.import_progress.setFormat("%p%")
             self.import_progress_label.setText("4/4 단계 · 처리 완료")
@@ -440,7 +450,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cancel_button.setEnabled(False)
         self.import_progress.setFormat("취소 중…")
         self.import_progress_label.setText("취소 중…")
-        self.status_label.setText("현재 처리 중인 작업이 끝나면 자동 수집을 취소합니다.")
+        self.status_label.setText("현재 단계가 끝나면 남은 AI 작업을 건너뛰고 저장합니다.")
 
     @QtCore.Slot(object)
     def _on_import_progress(self, progress: WorkflowProgress) -> None:
@@ -486,6 +496,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _open_dashboard(self) -> None:
         if self.dashboard_path and self.dashboard_path.is_file():
+            try:
+                html = self.dashboard_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                html = ""
+            import re
+            match = re.search(r'<meta\s+name="generator"\s+content="hospital-marketing ([^"]+)"\s*/?>', html)
+            if match is None or match.group(1) != APP_VERSION:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "이전 버전 대시보드",
+                    "이전 버전에서 만든 대시보드입니다. 위키를 다시 생성하면 새 화면으로 바뀝니다.",
+                )
             self.open_path(self.dashboard_path)
 
 

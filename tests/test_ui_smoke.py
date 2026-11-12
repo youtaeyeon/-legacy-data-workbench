@@ -164,10 +164,12 @@ def test_main_window_status_redacts_masked_provider_key(tmp_path):
 
 
 def test_open_dashboard_uses_injected_open_handler(tmp_path):
+    from hospital_marketing.version import APP_VERSION
+
     _app()
     dashboard = tmp_path / "dashboard" / "index.html"
     dashboard.parent.mkdir(parents=True)
-    dashboard.write_text("<html></html>", encoding="utf-8")
+    dashboard.write_text(f'<meta name="generator" content="hospital-marketing {APP_VERSION}">', encoding="utf-8")
     opened = []
     settings_store = SettingsStore(tmp_path / "settings.json")
     settings_store.save(AppSettings(target_dir=tmp_path))
@@ -176,6 +178,25 @@ def test_open_dashboard_uses_injected_open_handler(tmp_path):
     window.open_dashboard_button.click()
 
     assert opened == [dashboard]
+
+
+@pytest.mark.parametrize("html", ["<html></html>", '<meta name="generator" content="hospital-marketing 0.0.0">'])
+def test_open_dashboard_warns_for_legacy_or_different_version(tmp_path, monkeypatch, html):
+    _app()
+    dashboard = tmp_path / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text(html, encoding="utf-8")
+    opened, messages = [], []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda _parent, title, text: messages.append((title, text)))
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(target_dir=tmp_path))
+    window = MainWindow(settings, FakeWorkflow(dashboard), open_path=opened.append)
+
+    window.open_dashboard_button.click()
+
+    assert opened == [dashboard]
+    assert messages == [("이전 버전 대시보드", "이전 버전에서 만든 대시보드입니다. 위키를 다시 생성하면 새 화면으로 바뀝니다.")]
+    window.close()
 
 
 def test_settings_dialog_saves_provider_and_key_to_separate_stores(tmp_path, monkeypatch):
