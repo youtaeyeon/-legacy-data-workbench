@@ -4,12 +4,15 @@ import os
 import inspect
 from threading import Event
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..documents import SUPPORTED_EXTENSIONS
+from ..ai import cli_status
+from ..credentials import CredentialStore, CredentialStoreError
 from ..providers import (
     ProviderConfigurationError,
     ProviderRequestError,
@@ -68,6 +71,27 @@ class _ImportWorker(QtCore.QObject):
             self.finished.emit(result, None)
 
 
+class _AIStatusSignals(QtCore.QObject):
+    finished = QtCore.Signal(str, object, object)
+
+
+class _AIStatusWorker(QtCore.QRunnable):
+    def __init__(self, model_id: str):
+        super().__init__()
+        self.model_id = model_id
+        self.signals = _AIStatusSignals()
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            status = cli_status.check_cli_status(self.model_id)
+            auth_status = cli_status.check_cli_auth_status(self.model_id) if status.installed else (False, status.error)
+        except Exception:
+            status = None
+            auth_status = (None, "CLI 로그인 상태를 확인하지 못했습니다.")
+        self.signals.finished.emit(self.model_id, status, auth_status)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(
         self,
@@ -86,6 +110,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._import_context: tuple[AppSettings, Path, list[LargeSourceFile]] | None = None
         self._close_when_import_finishes = False
         self._cancel_event = Event()
+        self._ai_status_worker: _AIStatusWorker | None = None
         self.setWindowTitle(f"병원 마케팅 위키 MVP · v{APP_VERSION}")
         self.resize(900, 500)
         self.setMinimumWidth(780)
@@ -114,9 +139,23 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(central)
         layout.setContentsMargins(28, 22, 28, 22)
         layout.setSpacing(12)
+        title_row = QtWidgets.QHBoxLayout()
         self.title_label = QtWidgets.QLabel("병원 마케팅 위키")
         self.title_label.setObjectName("appTitle")
-        layout.addWidget(self.title_label)
+        title_row.addWidget(self.title_label)
+        title_row.addStretch(1)
+        self.ai_status_badge = QtWidgets.QToolButton()
+        self.ai_status_badge.setObjectName("ai_status_badge")
+        self.ai_status_badge.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+        self.ai_status_badge.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.ai_status_badge.setStyleSheet(
+            "QToolButton { border: 1px solid #8a8f93; border-radius: 12px; padding: 5px 10px; "
+            "background: #e9e3d3; color: #09223f; font-weight: 600; }"
+        )
+        self.ai_status_badge.clicked.connect(self._open_settings)
+        title_row.addWidget(self.ai_status_badge, 0, QtCore.Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(title_row)
+        self._refresh_ai_status()
         subtitle = QtWidgets.QLabel("선택한 원본 파일을 읽어 병원별 Markdown 위키와 검색형 대시보드를 생성합니다. 목업 데이터로 먼저 확인하세요.")
         subtitle.setObjectName("appSubtitle")
         subtitle.setWordWrap(True)
@@ -268,7 +307,79 @@ class MainWindow(QtWidgets.QMainWindow):
         from ..credentials import CredentialStore
 
         dialog = SettingsDialog(self.settings_store, CredentialStore(), ProviderRegistry(), self)
-        dialog.exec()
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            self._refresh_ai_status()
+
+    def _refresh_ai_status(self) -> None:
+        settings = self.settings_store.load()
+        model_id = settings.model_id.strip()
+        if settings.mock_mode or settings.provider_id == "mock":
+            self._set_ai_status("목업 모드", "목업", "#e9e3d3", "외부 AI를 호출하지 않는 목업 모드입니다.")
+            return
+        if settings.provider_id == "local-cli":
+            cli_label = f"{model_id or 'local'}-cli"
+            self._set_ai_status(
+                cli_label, "확인 중…", "#e9e3d3", f"모델 ID: {model_id or '(없음)'}"
+            )
+            worker = _AIStatusWorker(model_id)
+            worker.signals.finished.connect(self._on_cli_ai_status_finished)
+            self._ai_status_worker = worker
+            QtCore.QThreadPool.globalInstance().start(worker)
+            return
+
+        provider_label = {"gemini": "gemini-api", "openai": "openai-api", "anthropic": "anthropic-api"}.get(
+            settings.provider_id, f"{settings.provider_id}-api"
+        )
+        try:
+            has_key = bool(CredentialStore().get(settings.provider_id))
+        except CredentialStoreError as exc:
+            self._set_ai_status(provider_label, "연결 안 됨", "#f4cccc", str(exc), model_id)
+            return
+        if not has_key:
+            self._set_ai_status(provider_label, "연결 안 됨", "#f4cccc", "API 키 없음", model_id)
+            return
+        check = settings.last_connection_check
+        if (
+            check
+            and check.get("provider_id") == settings.provider_id
+            and check.get("model_id") == model_id
+        ):
+            if check.get("succeeded") is True:
+                self._set_ai_status(provider_label, "연결 완료", "#d9ead3", "마지막 연결 테스트 성공", model_id)
+            else:
+                self._set_ai_status(provider_label, "연결 안 됨", "#f4cccc", "마지막 연결 테스트 실패", model_id)
+            return
+        self._set_ai_status(provider_label, "확인 필요", "#fce5cd", "저장된 연결 테스트 결과가 없습니다.", model_id)
+
+    def _set_ai_status(self, provider_label: str, state: str, color: str, reason: str, model_id: str = "") -> None:
+        self.ai_status_badge.setText(f"{provider_label} : {state}")
+        tooltip = reason
+        if model_id:
+            tooltip = f"모델 ID: {model_id}\n{reason}"
+        self.ai_status_badge.setToolTip(tooltip)
+        self.ai_status_badge.setStyleSheet(
+            "QToolButton { border: 1px solid #8a8f93; border-radius: 12px; padding: 5px 10px; "
+            f"background: {color}; color: #09223f; font-weight: 600; }}"
+        )
+
+    @QtCore.Slot(str, object, object)
+    def _on_cli_ai_status_finished(self, model_id: str, status, auth_status) -> None:
+        if self.settings_store.load().model_id.strip() != model_id:
+            return
+        self._ai_status_worker = None
+        settings = self.settings_store.load()
+        check = settings.last_connection_check
+        if status is None or not status.installed:
+            reason = status.error if status is not None else "CLI 상태를 확인하지 못했습니다."
+            self._set_ai_status(f"{model_id or 'local'}-cli", "연결 안 됨", "#f4cccc", reason or "CLI 설치 안 됨", model_id)
+        elif auth_status[0] is True:
+            self._set_ai_status(f"{model_id}-cli", "연결 완료", "#d9ead3", "CLI 설치 및 로그인 완료", model_id)
+        elif auth_status[0] is False:
+            self._set_ai_status(f"{model_id}-cli", "연결 안 됨", "#f4cccc", auth_status[1] or "CLI 로그인이 필요합니다.", model_id)
+        elif check and check.get("provider_id") == "local-cli" and check.get("model_id") == model_id and check.get("succeeded") is True:
+            self._set_ai_status(f"{model_id}-cli", "연결 완료", "#d9ead3", "마지막 연결 테스트 성공", model_id)
+        else:
+            self._set_ai_status(f"{model_id}-cli", "확인 필요", "#fce5cd", auth_status[1] or "로그인 상태를 확인할 수 없습니다.", model_id)
 
     def _open_product_keywords(self) -> None:
         settings = self.settings_store.load()
@@ -398,6 +509,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"AI 입력 한도를 넘을 수 있습니다.\n{details}"
                     )
             self.status_label.setText(status)
+            if not updated.mock_mode:
+                self._record_ai_connection_check(updated, True)
             self._set_dashboard_path(self.dashboard_path)
             self.import_progress.setValue(100)
             self.import_progress.setFormat("%p%")
@@ -407,11 +520,26 @@ class MainWindow(QtWidgets.QMainWindow):
             self._hide_import_progress()
             safe_message = sanitize_provider_error_message(str(exc))
             self.status_label.setText(f"AI 처리 실패: {safe_message} 목업 모드로 다시 실행할 수 있습니다.")
+            if not updated.mock_mode:
+                self._record_ai_connection_check(updated, False)
             self.open_dashboard_button.setEnabled(False)
         except Exception:
             self._hide_import_progress()
             self.status_label.setText("처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요.")
             self.open_dashboard_button.setEnabled(False)
+
+    def _record_ai_connection_check(self, settings: AppSettings, succeeded: bool) -> None:
+        current = self.settings_store.load()
+        self.settings_store.save(replace(
+            current,
+            last_connection_check={
+                "provider_id": settings.provider_id,
+                "model_id": settings.model_id,
+                "succeeded": succeeded,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            },
+        ))
+        self._refresh_ai_status()
 
     def _hide_import_progress(self) -> None:
         self.import_progress.setVisible(False)

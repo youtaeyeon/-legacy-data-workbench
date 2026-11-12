@@ -37,6 +37,14 @@ def _mock_cli_status_checks(monkeypatch):
         "hospital_marketing.ui.settings_dialog.cli_status.check_node_tool_status",
         lambda: {"node": None, "npm": None},
     )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.main_window.cli_status.check_cli_status",
+        lambda cli: CLIStatus(True, f"/mock/{cli}", "1.0", None),
+    )
+    monkeypatch.setattr(
+        "hospital_marketing.ui.main_window.cli_status.check_cli_auth_status",
+        lambda _cli: (True, None),
+    )
     yield
     assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
     app = QtWidgets.QApplication.instance()
@@ -121,6 +129,103 @@ def test_main_window_no_longer_shows_channel_candidate_button(tmp_path):
     _app()
     window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "dashboard.html"))
     assert not hasattr(window, "channel_candidates_button")
+    window.close()
+
+
+def test_main_window_ai_status_badge_shows_mock_mode(tmp_path):
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(provider_id="mock", model_id="", mock_mode=True))
+    window = MainWindow(settings_store, FakeWorkflow(tmp_path / "dashboard.html"))
+
+    assert window.ai_status_badge.objectName() == "ai_status_badge"
+    assert window.ai_status_badge.text() == "목업 모드 : 목업"
+    assert window.ai_status_badge.toolTip()
+    window.close()
+
+
+def test_main_window_api_badge_uses_saved_success_without_network_request(tmp_path, monkeypatch):
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(
+        provider_id="openai",
+        model_id="gpt-test",
+        mock_mode=False,
+        last_connection_check={
+            "provider_id": "openai",
+            "model_id": "gpt-test",
+            "succeeded": True,
+            "checked_at": "2026-11-12T00:00:00+00:00",
+        },
+    ))
+    monkeypatch.setattr("hospital_marketing.credentials.CredentialStore.get", lambda _store, _provider: "saved-secret")
+    requests = []
+    monkeypatch.setattr("httpx.Client.post", lambda *_args, **_kwargs: requests.append(True))
+
+    window = MainWindow(settings_store, FakeWorkflow(tmp_path / "dashboard.html"))
+
+    assert window.ai_status_badge.text() == "openai-api : 연결 완료"
+    assert requests == []
+    window.close()
+
+
+def test_main_window_api_badge_ignores_result_for_different_model(tmp_path, monkeypatch):
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(
+        provider_id="openai",
+        model_id="gpt-current",
+        mock_mode=False,
+        last_connection_check={
+            "provider_id": "openai",
+            "model_id": "gpt-previous",
+            "succeeded": True,
+            "checked_at": "2026-11-12T00:00:00+00:00",
+        },
+    ))
+    monkeypatch.setattr("hospital_marketing.credentials.CredentialStore.get", lambda _store, _provider: "saved-secret")
+
+    window = MainWindow(settings_store, cast(ImportWorkflow, FakeWorkflow(tmp_path / "dashboard.html")))
+
+    assert window.ai_status_badge.text() == "openai-api : 확인 필요"
+    assert "gpt-current" in window.ai_status_badge.toolTip()
+    window.close()
+
+
+def test_main_window_api_badge_reports_missing_key_without_request(tmp_path, monkeypatch):
+    _app()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(provider_id="gemini", model_id="gemini-test", mock_mode=False))
+    monkeypatch.setattr("hospital_marketing.credentials.CredentialStore.get", lambda _store, _provider: None)
+
+    window = MainWindow(settings_store, cast(ImportWorkflow, FakeWorkflow(tmp_path / "dashboard.html")))
+
+    assert window.ai_status_badge.text() == "gemini-api : 연결 안 됨"
+    assert "API 키 없음" in window.ai_status_badge.toolTip()
+    window.close()
+
+
+def test_main_window_cli_badge_shows_not_logged_in_reason(tmp_path, monkeypatch):
+    _app()
+    monkeypatch.setattr("hospital_marketing.ui.main_window.cli_status.check_cli_auth_status", lambda _cli: (False, "claude CLI 로그인이 필요합니다."))
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), cast(ImportWorkflow, FakeWorkflow(tmp_path / "dashboard.html")))
+    assert QtCore.QThreadPool.globalInstance().waitForDone(5_000)
+    _app().processEvents()
+
+    assert window.ai_status_badge.text() == "claude-cli : 연결 안 됨"
+    assert "로그인" in window.ai_status_badge.toolTip()
+    window.close()
+
+
+def test_main_window_ai_badge_opens_settings(tmp_path, monkeypatch):
+    _app()
+    opened = []
+    monkeypatch.setattr(SettingsDialog, "exec", lambda dialog: opened.append(dialog) or QtWidgets.QDialog.DialogCode.Rejected)
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "dashboard.html"))
+
+    window.ai_status_badge.click()
+
+    assert len(opened) == 1
     window.close()
 
 

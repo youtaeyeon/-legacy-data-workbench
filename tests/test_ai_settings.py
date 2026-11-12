@@ -161,6 +161,12 @@ def test_connection_test_reports_http_status_without_exposing_key(tmp_path, stat
     assert dialog.test_connection_button.isEnabled()
     assert dialog.save_button.isEnabled()
     assert not dialog.connection_progress_bar.isVisible()
+    saved_check = dialog.settings_store.load().last_connection_check
+    assert saved_check is not None
+    assert saved_check["provider_id"] == "openai"
+    assert saved_check["succeeded"] is (status_code == 200)
+    assert isinstance(saved_check["checked_at"], str)
+    assert "secret-test-key" not in dialog.settings_store.path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
