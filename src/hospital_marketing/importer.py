@@ -4,7 +4,7 @@ import csv
 import io
 import sqlite3
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -116,6 +116,7 @@ class ImportService:
         *,
         enabled_extensions: Sequence[str] | None = None,
         exclude_dir: Path | None = None,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> ImportReport:
         report = ImportReport()
         source_dir = Path(source_dir)
@@ -137,7 +138,9 @@ class ImportService:
         candidate_rows: list[tuple[str, Hospital, str, int]] = []
         has_snapshot = False
 
-        for path in files:
+        for index, path in enumerate(files, 1):
+            if on_progress:
+                on_progress(index, len(files), path.name)
             file_name = path.relative_to(source_dir).as_posix()
             try:
                 workbook = _load_source_workbook(path)

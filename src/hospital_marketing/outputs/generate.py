@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from ..ai.base import AIProvider
 from ..ai.mock import MockProvider
@@ -29,6 +29,7 @@ def generate_outputs(
     *,
     registered_products: Sequence[str] = DEFAULT_PRODUCTS,
     import_report: ImportReport | None = None,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> OutputManifest:
     target_dir = Path(target_dir)
     wiki_dir = target_dir / "wiki"
@@ -39,7 +40,10 @@ def generate_outputs(
     scripts_by_hospital: dict[str, list[dict]] = {}
     for entry in script_entries:
         scripts_by_hospital.setdefault(entry["hospital_id"], []).append(entry)
-    for hospital in repository.list_hospitals():
+    hospitals = repository.list_hospitals()
+    for index, hospital in enumerate(hospitals, 1):
+        if on_progress:
+            on_progress(index, len(hospitals), hospital.hospital_name)
         path = wiki_dir / f"{hospital.hospital_id}.md"
         content = render_hospital_markdown(
             hospital,

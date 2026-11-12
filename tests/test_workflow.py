@@ -77,7 +77,7 @@ def test_workflow_cancel_event_stops_before_next_hospital(tmp_path):
     registry = ProviderRegistry({"mock": lambda **_: CancellingProvider()})
     result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=registry).run(
         fixtures / "initial", tmp_path / "target", mock_mode=True, cancel_event=cancel,
-        on_progress=lambda _text: cancel.set())
+        on_progress=lambda progress: cancel.set() if progress.stage == "channels" else None)
     assert len(calls) == 1
     assert result.channel_collection_cancelled
 
@@ -279,13 +279,56 @@ def test_workflow_selects_expected_classification_method_and_reports_progress(tm
 
     assert bool(provider.batch_calls) is use_batch
     assert bool(provider.single_calls) is not use_batch
-    assert progress == ["AI 분류 중 · 병원 1/1"]
+    classification_progress = next(item for item in progress if item.stage == "classification")
+    assert classification_progress.current == 1
+    assert classification_progress.total == 1
+    assert classification_progress.percent >= 50
     saved = Repository(target / "data" / "app.db")
     saved.initialize()
     classified = saved.list_contents("MOCK-001")[0]
     saved.close()
     assert classified.relevance_status == "relevant"
     assert classified.evidence == ("일괄 근거" if use_batch else "단건 근거")
+
+
+def test_workflow_progress_uses_monotonic_percentages_and_four_ordered_stages(tmp_path):
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(auto_collect_hospital_channels=True))
+    progress = []
+
+    ImportWorkflow(settings_store=settings).run(
+        fixtures / "initial", tmp_path / "target", mock_mode=True,
+        on_progress=progress.append,
+    )
+
+    percentages = [item.percent for item in progress]
+    stages = [item.stage for item in progress]
+    assert percentages[0] == 0
+    assert percentages == sorted(percentages)
+    assert percentages[-1] == 100
+    assert stages == sorted(stages, key=("files", "channels", "classification", "outputs").index)
+
+
+def test_import_folder_reports_each_file_progress(tmp_path):
+    from hospital_marketing.importer import ImportService
+    from hospital_marketing.repository import Repository
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    repository = Repository(tmp_path / "target" / "data" / "app.db")
+    repository.initialize()
+    progress = []
+
+    ImportService(repository).import_folder(
+        fixtures / "initial", on_progress=lambda current, total, name: progress.append((current, total, name))
+    )
+
+    assert progress
+    assert progress[-1][0] == progress[-1][1]
+    assert all(1 <= current <= total for current, total, _ in progress)
+    repository.close()
 
 def test_workflow_reports_large_source_warning_without_counting_failure(tmp_path):
     from hospital_marketing.documents.size_warnings import LARGE_SOURCE_FILE_THRESHOLD_BYTES
