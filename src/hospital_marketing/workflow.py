@@ -36,6 +36,15 @@ class WorkflowResult:
     channel_collection_cancelled: bool = False
 
 
+@dataclass(frozen=True)
+class WorkflowProgress:
+    stage: str
+    current: int
+    total: int
+    message: str
+    percent: int
+
+
 class ImportWorkflow:
     def __init__(
         self,
@@ -59,12 +68,25 @@ class ImportWorkflow:
         model_id: str = "",
         mock_mode: bool = True,
         enabled_extensions: Sequence[str] | None = None,
-        on_progress: Callable[[str], None] | None = None,
+        on_progress: Callable[[WorkflowProgress], None] | None = None,
         cancel_event=None,
     ) -> WorkflowResult:
         source_dir = Path(source_dir)
         target_dir = Path(target_dir)
         settings = self.settings_store.load()
+        last_percent = 0
+
+        def report_progress(stage: str, current: int, total: int, message: str) -> None:
+            nonlocal last_percent
+            starts, ends = {"files": (0, 20), "channels": (20, 50), "classification": (50, 85), "outputs": (85, 100)}[stage]
+            fraction = current / max(total, 1)
+            percent = max(last_percent, round(starts + (ends - starts) * fraction))
+            last_percent = percent
+            if on_progress:
+                on_progress(WorkflowProgress(stage, current, total, message, percent))
+
+        if on_progress:
+            on_progress(WorkflowProgress("files", 0, 1, "원본 파일 읽기·문서 변환", 0))
         extensions = tuple(enabled_extensions) if enabled_extensions is not None else settings.enabled_extensions
         large_source_files = find_large_source_files(
             source_dir,
@@ -79,6 +101,7 @@ class ImportWorkflow:
                 source_dir,
                 enabled_extensions=extensions,
                 exclude_dir=target_dir,
+                on_progress=lambda current, total, name: report_progress("files", current, total, f"원본 파일 읽기·문서 변환 · {current}/{total} · {name}"),
             )
             report.issues.extend(large_source_file_issue(item) for item in large_source_files)
             if mock_mode or provider_id == "mock":
@@ -89,6 +112,31 @@ class ImportWorkflow:
                 api_key = self.credential_store.get(provider_id)
                 provider = self.provider_registry.create(provider_id, api_key=api_key or "", model=model_id)
 
+            document_result = convert_source_documents(
+                source_dir, target_dir, extensions, provider,
+                on_progress=lambda current, total, name: report_progress("files", current, total, f"원본 파일 읽기·문서 변환 · {current}/{total} · {name}"),
+            )
+            report.source_dir = str(source_dir)
+            report.source_files = document_result.source_files
+            report.files_seen = document_result.files_seen
+            report.documents_converted_count = document_result.files_converted
+            structured_failures = {
+                issue.file_name
+                for issue in report.issues
+                if issue.code in {
+                    "invalid_workbook",
+                    "invalid_csv",
+                    "missing_header",
+                    "missing_required_columns",
+                }
+            }
+            document_issues = [
+                issue
+                for issue in document_result.issues
+                if issue.file_name not in structured_failures
+            ]
+            report.files_failed += len({issue.file_name for issue in document_issues})
+            report.issues.extend(document_issues)
             channels_collected = posts_collected = channels_needing_review = channel_failures = channel_discarded = 0
             failure_details: list[dict[str, str]] = []
             skipped_reason = ""
@@ -107,8 +155,7 @@ class ImportWorkflow:
                         if cancel_event is not None and cancel_event.is_set():
                             collection_cancelled = True
                             break
-                        if on_progress:
-                            on_progress(f"신규 병원 채널·게시물 수집 중 {index}/{len(new_hospitals)} · {hospital.hospital_name}")
+                        report_progress("channels", index, len(new_hospitals), f"신규 병원 채널·게시물 수집 · {index}/{len(new_hospitals)} · {hospital.hospital_name}")
                         try:
                             channels, posts, discarded = parse_discovery_response(discover(hospital))
                             channel_discarded += discarded
@@ -146,8 +193,7 @@ class ImportWorkflow:
                         continue
                     contents_to_classify.append(content)
                 if contents_to_classify:
-                    if on_progress:
-                        on_progress(f"AI 분류 중 · 병원 {hospital_index}/{len(hospitals)}")
+                    report_progress("classification", hospital_index, len(hospitals), f"AI 콘텐츠 분류 · 병원 {hospital_index}/{len(hospitals)} · {hospital.hospital_name}")
                     batch_method = getattr(provider, "classify_contents", None)
                     results = (batch_method(contents_to_classify, products) if provider_id == "local-cli" and not mock_mode and batch_method
                                else [provider.classify_content(content, products) for content in contents_to_classify])
@@ -162,37 +208,16 @@ class ImportWorkflow:
                 if script.script_text and not script.summary:
                     repository.upsert_script(replace(script, summary=provider.summarize_script(script.script_text)))
 
-            document_result = convert_source_documents(
-                source_dir, target_dir, extensions, provider
-            )
-            report.source_dir = str(source_dir)
-            report.source_files = document_result.source_files
-            report.files_seen = document_result.files_seen
-            report.documents_converted_count = document_result.files_converted
-            structured_failures = {
-                issue.file_name
-                for issue in report.issues
-                if issue.code in {
-                    "invalid_workbook",
-                    "invalid_csv",
-                    "missing_header",
-                    "missing_required_columns",
-                }
-            }
-            document_issues = [
-                issue
-                for issue in document_result.issues
-                if issue.file_name not in structured_failures
-            ]
-            report.files_failed += len({issue.file_name for issue in document_issues})
-            report.issues.extend(document_issues)
+            output_hospitals = repository.list_hospitals()
             outputs = generate_outputs(
                 repository,
                 target_dir,
                 provider,
                 registered_products=products,
                 import_report=report,
+                on_progress=lambda current, total, name: report_progress("outputs", current, total, f"위키·대시보드·엑셀 생성 · {current}/{total} · {name}"),
             )
+            report_progress("outputs", max(len(output_hospitals), 1), max(len(output_hospitals), 1), "위키·대시보드·엑셀 생성 완료")
             result = WorkflowResult(report, outputs, classified_count, needs_review_count, channels_collected,
                                     posts_collected, channels_needing_review, channel_failures, channel_discarded,
                                     tuple(failure_details), skipped_reason, collection_cancelled)

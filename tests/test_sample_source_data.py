@@ -33,6 +33,24 @@ def test_sample_contract_folders_import_incrementally(tmp_path):
     assert all(item["content_url"].startswith("https://example.test/") for item in script_index["scripts"])
 
 
+def test_sample_contract_progress_reports_stages_and_never_moves_backwards(tmp_path):
+    progress = []
+    workflow = ImportWorkflow(SettingsStore(tmp_path / "settings.json"))
+
+    result = workflow.run(
+        SAMPLE_ROOT / "20261102", tmp_path / "target", enabled_extensions=(".xlsx",),
+        on_progress=progress.append,
+    )
+
+    assert result.report.inserted_count == 14
+    assert [item.percent for item in progress] == sorted(item.percent for item in progress)
+    assert progress[0].percent == 0
+    assert progress[-1].percent == 100
+    assert list(dict.fromkeys(item.stage for item in progress)) == [
+        "files", "channels", "classification", "outputs"
+    ]
+
+
 def test_root_folder_ignores_nested_snapshots_and_reports_zero_files(tmp_path):
     workflow = ImportWorkflow(SettingsStore(tmp_path / "settings.json"))
     target = tmp_path / "target"

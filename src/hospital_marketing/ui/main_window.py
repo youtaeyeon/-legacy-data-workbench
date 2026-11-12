@@ -24,7 +24,7 @@ from ..documents.size_warnings import (
 from ..settings import AppSettings, SettingsStore
 
 from ..version import APP_VERSION
-from ..workflow import ImportWorkflow
+from ..workflow import ImportWorkflow, WorkflowProgress
 from .settings_dialog import SettingsDialog
 from .product_keywords_dialog import ProductKeywordsDialog
 
@@ -35,7 +35,7 @@ PATH_GUIDE_BUTTON_RIGHT_MARGIN = 14
 
 class _ImportWorker(QtCore.QObject):
     finished = QtCore.Signal(object, object)
-    progress = QtCore.Signal(str)
+    progress = QtCore.Signal(object)
 
     def __init__(self, workflow: ImportWorkflow, source_dir: Path, target_dir: Path, settings: AppSettings, cancel_event: Event):
         super().__init__()
@@ -174,34 +174,43 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.extensions_group)
 
         self.actions_group = QtWidgets.QGroupBox("2. 처리 및 결과")
-        actions = QtWidgets.QHBoxLayout(self.actions_group)
+        actions = QtWidgets.QVBoxLayout(self.actions_group)
+        action_buttons = QtWidgets.QHBoxLayout()
         self.run_button = QtWidgets.QPushButton("선택 파일 읽고 위키 생성")
         self.run_button.setObjectName("run_import_button")
         self.run_button.clicked.connect(self._run_import)
-        actions.addWidget(self.run_button, 2)
+        action_buttons.addWidget(self.run_button, 2)
         self.settings_button = QtWidgets.QPushButton("AI 설정")
         self.settings_button.clicked.connect(self._open_settings)
-        actions.addWidget(self.settings_button)
+        action_buttons.addWidget(self.settings_button)
         self.product_keywords_button = QtWidgets.QPushButton("검색 단어 관리")
         self.product_keywords_button.setObjectName("product_keywords_button")
         self.product_keywords_button.clicked.connect(self._open_product_keywords)
-        actions.addWidget(self.product_keywords_button)
+        action_buttons.addWidget(self.product_keywords_button)
         self.open_dashboard_button = QtWidgets.QPushButton("대시보드 열기")
         self.open_dashboard_button.setObjectName("open_dashboard_button")
         self.open_dashboard_button.setEnabled(False)
         self.open_dashboard_button.clicked.connect(self._open_dashboard)
-        actions.addWidget(self.open_dashboard_button)
+        action_buttons.addWidget(self.open_dashboard_button)
 
         self.import_progress = QtWidgets.QProgressBar()
         self.import_progress.setObjectName("import_progress")
-        self.import_progress.setRange(0, 0)
+        self.import_progress.setRange(0, 100)
+        self.import_progress.setFormat("%p%")
+        self.import_progress.setTextVisible(True)
+        self.import_progress.setMinimumHeight(28)
         self.import_progress.setVisible(False)
+        self.import_progress_label = QtWidgets.QLabel()
+        self.import_progress_label.setObjectName("import_progress_label")
+        self.import_progress_label.setVisible(False)
+        actions.addLayout(action_buttons)
+        actions.addWidget(self.import_progress_label)
         actions.addWidget(self.import_progress)
         self.cancel_button = QtWidgets.QPushButton("취소")
         self.cancel_button.setObjectName("cancel_import_button")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._cancel_import)
-        actions.addWidget(self.cancel_button)
+        action_buttons.addWidget(self.cancel_button)
         layout.addWidget(self.actions_group)
 
         self.status_label = QtWidgets.QLabel("Source와 Target을 정한 뒤 실행하세요.")
@@ -324,6 +333,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.import_progress.setVisible(True)
+        self.import_progress.setValue(0)
+        self.import_progress.setFormat("%p%")
+        self.import_progress_label.setVisible(True)
+        self.import_progress_label.setText("1/4 단계 · 원본 파일 읽기·문서 변환")
         self.status_label.setText(
             f"처리 중 · Source {source_dir} · 선택한 원본 파일을 읽고 Markdown 위키와 결과를 생성하고 있습니다."
         )
@@ -333,7 +346,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._import_worker.moveToThread(self._import_thread)
         self._import_thread.started.connect(self._import_worker.run)
         self._import_worker.finished.connect(self._on_import_finished)
-        self._import_worker.progress.connect(self.status_label.setText)
+        self._import_worker.progress.connect(self._on_import_progress)
         self._import_worker.finished.connect(self._import_thread.quit)
         self._import_worker.finished.connect(self._import_worker.deleteLater)
         self._import_thread.finished.connect(self._cleanup_import_thread)
@@ -341,11 +354,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(object, object)
     def _on_import_finished(self, result, error) -> None:
-        self.import_progress.setVisible(False)
         self.run_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         context = self._import_context
         if context is None:
+            self._hide_import_progress()
             return
         updated, target_dir, large_source_files = context
         try:
@@ -386,13 +399,30 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
             self.status_label.setText(status)
             self._set_dashboard_path(self.dashboard_path)
+            self.import_progress.setValue(100)
+            self.import_progress.setFormat("%p%")
+            self.import_progress_label.setText("4/4 단계 · 처리 완료")
+            QtCore.QTimer.singleShot(500, self._hide_import_progress_if_idle)
         except (ProviderConfigurationError, ProviderRequestError) as exc:
+            self._hide_import_progress()
             safe_message = sanitize_provider_error_message(str(exc))
             self.status_label.setText(f"AI 처리 실패: {safe_message} 목업 모드로 다시 실행할 수 있습니다.")
             self.open_dashboard_button.setEnabled(False)
         except Exception:
+            self._hide_import_progress()
             self.status_label.setText("처리에 실패했습니다. 입력 파일과 설정을 확인한 뒤 다시 시도해 주세요.")
             self.open_dashboard_button.setEnabled(False)
+
+    def _hide_import_progress(self) -> None:
+        self.import_progress.setVisible(False)
+        self.import_progress_label.setVisible(False)
+
+    @QtCore.Slot()
+    def _hide_import_progress_if_idle(self) -> None:
+        if self._import_context is None:
+            self._hide_import_progress()
+        else:
+            QtCore.QTimer.singleShot(50, self._hide_import_progress_if_idle)
 
     @QtCore.Slot()
     def _cleanup_import_thread(self) -> None:
@@ -405,7 +435,28 @@ class MainWindow(QtWidgets.QMainWindow):
     def _cancel_import(self) -> None:
         self._cancel_event.set()
         self.cancel_button.setEnabled(False)
+        self.import_progress.setFormat("취소 중…")
+        self.import_progress_label.setText("취소 중…")
         self.status_label.setText("현재 처리 중인 작업이 끝나면 자동 수집을 취소합니다.")
+
+    @QtCore.Slot(object)
+    def _on_import_progress(self, progress: WorkflowProgress) -> None:
+        if self._cancel_event.is_set():
+            self.import_progress.setFormat("취소 중…")
+            self.import_progress_label.setText("취소 중…")
+            return
+        stage_labels = {
+            "files": (1, "원본 파일 읽기·문서 변환"),
+            "channels": (2, "신규 병원 채널·게시물 수집"),
+            "classification": (3, "AI 콘텐츠 분류"),
+            "outputs": (4, "위키·대시보드·엑셀 생성"),
+        }
+        stage_number, stage_label = stage_labels[progress.stage]
+        self.import_progress.setFormat("%p%")
+        self.import_progress.setValue(progress.percent)
+        self.import_progress_label.setText(
+            f"{stage_number}/4 단계 · {stage_label} · {progress.current}/{progress.total} · {progress.message}"
+        )
 
     def closeEvent(self, event) -> None:
         if self._import_thread is not None and self._import_thread.isRunning():

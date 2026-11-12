@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from ..ai.base import AIProvider
 from ..report import ImportIssue
@@ -28,6 +28,8 @@ def convert_source_documents(
     target_dir: Path,
     enabled_extensions: Sequence[str],
     provider: AIProvider,
+    *,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> DocumentConversionResult:
     source_dir = Path(source_dir)
     target_dir = Path(target_dir)
@@ -35,7 +37,9 @@ def convert_source_documents(
         source_dir, enabled_extensions, exclude_dir=target_dir
     )
     result = DocumentConversionResult(files_seen=len(files))
-    for source_file in files:
+    for index, source_file in enumerate(files, 1):
+        if on_progress:
+            on_progress(index, len(files), source_file.name)
         relative_name = source_file.relative_to(source_dir).as_posix()
         result.source_files.append(relative_name)
         try:

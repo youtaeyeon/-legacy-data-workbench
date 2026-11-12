@@ -676,6 +676,10 @@ def test_import_runs_off_ui_thread_and_keeps_window_responsive(tmp_path):
         assert "처리 중" in window.status_label.text()
         _app().processEvents()
         _wait_for_import(window)
+        assert window.import_progress.isVisible()
+        assert window.import_progress.value() == 100
+        QtCore.QThread.msleep(550)
+        _app().processEvents()
 
         assert timer_fired == [True]
         assert window.run_button.isEnabled()
@@ -686,6 +690,49 @@ def test_import_runs_off_ui_thread_and_keeps_window_responsive(tmp_path):
         release.set()
         _wait_for_import(window)
         window.close()
+
+
+def test_import_progress_bar_shows_percentage_and_stage_then_hides(tmp_path):
+    from hospital_marketing.workflow import WorkflowProgress
+
+    _app()
+    dashboard = tmp_path / "target" / "dashboard" / "index.html"
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(dashboard))
+    window.show()
+
+    assert window.import_progress.minimum() == 0
+    assert window.import_progress.maximum() == 100
+    window.import_progress.setVisible(True)
+    window.import_progress_label.setVisible(True)
+    window._on_import_progress(WorkflowProgress("channels", 3, 14, "채널 수집 · 3/14 · 목업 병원", 26))
+    assert window.import_progress.value() == 26
+    assert window.import_progress.isVisible()
+    assert "2/4 단계" in window.import_progress_label.text()
+    assert "3/14" in window.import_progress_label.text()
+    window._cancel_import()
+    assert window.import_progress.format() == "취소 중…"
+    assert window.import_progress_label.text() == "취소 중…"
+    window._on_import_finished(None, RuntimeError("failed"))
+    assert not window.import_progress.isVisible()
+    window.close()
+
+
+def test_completed_progress_hides_after_import_context_cleanup(tmp_path):
+    _app()
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "dashboard.html"))
+    window.show()
+    window.import_progress.setVisible(True)
+    window.import_progress_label.setVisible(True)
+    window._import_context = (AppSettings(), tmp_path, [])
+
+    window._hide_import_progress_if_idle()
+    assert window.import_progress.isVisible()
+    window._import_context = None
+    QtCore.QThread.msleep(75)
+    _app().processEvents()
+
+    assert not window.import_progress.isVisible()
+    window.close()
 
 
 def test_closing_during_import_waits_for_completion_without_channel_prompt(tmp_path, monkeypatch):
