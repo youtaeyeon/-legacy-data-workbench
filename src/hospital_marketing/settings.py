@@ -27,6 +27,7 @@ class AppSettings:
     auto_collect_hospital_channels: bool = True
     enabled_extensions: tuple[str, ...] = SUPPORTED_EXTENSIONS
     product_keywords: tuple[ProductKeyword, ...] = tuple(ProductKeyword(term) for term in DEFAULT_PRODUCTS)
+    last_connection_check: dict[str, str | bool] | None = None
 
 
 def default_settings_path() -> Path:
@@ -78,6 +79,25 @@ class SettingsStore:
                 product_keywords = tuple(product_keywords_list)
             else:
                 product_keywords = AppSettings().product_keywords
+            raw_check = data.get("last_connection_check")
+            last_connection_check = None
+            if isinstance(raw_check, dict):
+                check_provider = raw_check.get("provider_id")
+                check_model = raw_check.get("model_id")
+                check_succeeded = raw_check.get("succeeded")
+                checked_at = raw_check.get("checked_at")
+                if (
+                    isinstance(check_provider, str)
+                    and isinstance(check_model, str)
+                    and isinstance(check_succeeded, bool)
+                    and isinstance(checked_at, str)
+                ):
+                    last_connection_check = {
+                        "provider_id": check_provider,
+                        "model_id": check_model,
+                        "succeeded": check_succeeded,
+                        "checked_at": checked_at,
+                    }
             return AppSettings(
                 source_dir=Path(data["source_dir"]) if data.get("source_dir") else None,
                 target_dir=Path(data["target_dir"]) if data.get("target_dir") else None,
@@ -87,6 +107,7 @@ class SettingsStore:
                 auto_collect_hospital_channels=bool(data.get("auto_collect_hospital_channels", True)),
                 enabled_extensions=tuple(extensions),
                 product_keywords=product_keywords,
+                last_connection_check=last_connection_check,
             )
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
             return AppSettings()
