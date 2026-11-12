@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import keyring
 import pytest
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from hospital_marketing.ai.registry import ProviderRegistry
 from hospital_marketing.credentials import CredentialStore
@@ -819,6 +819,23 @@ def test_import_progress_bar_shows_percentage_and_stage_then_hides(tmp_path):
     assert window.import_progress_label.text() == "취소 중…"
     window._on_import_finished(None, RuntimeError("failed"))
     assert not window.import_progress.isVisible()
+    window.close()
+
+
+def test_import_progress_text_stays_black_with_dark_system_palette(tmp_path):
+    _app()
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "dashboard.html"))
+    dark_palette = QtGui.QPalette(window.palette())
+    dark_palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("white"))
+    dark_palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("white"))
+    window.setPalette(dark_palette)
+    window.show()
+    _app().processEvents()
+
+    assert "QLabel#import_progress_label" in window.centralWidget().styleSheet()
+    assert "QProgressBar#import_progress" in window.centralWidget().styleSheet()
+    assert window.import_progress_label.palette().color(window.import_progress_label.foregroundRole()) == QtGui.QColor("black")
+    assert window.import_progress.palette().color(window.import_progress.foregroundRole()) == QtGui.QColor("black")
     window.close()
 
 
