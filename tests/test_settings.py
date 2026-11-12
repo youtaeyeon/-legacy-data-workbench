@@ -21,6 +21,26 @@ def test_settings_round_trip_paths_provider_model_and_mock_mode(tmp_path):
     assert loaded == settings
 
 
+def test_settings_round_trip_last_connection_check_without_api_key(tmp_path):
+    path = tmp_path / "settings.json"
+    settings = AppSettings(
+        provider_id="openai",
+        model_id="test-model",
+        last_connection_check={
+            "provider_id": "openai",
+            "model_id": "test-model",
+            "succeeded": True,
+            "checked_at": "2026-11-12T00:00:00+00:00",
+        },
+    )
+
+    SettingsStore(path).save(settings)
+    loaded = SettingsStore(path).load()
+
+    assert loaded.last_connection_check == settings.last_connection_check
+    assert "api_key" not in path.read_text(encoding="utf-8")
+
+
 def test_extension_options_default_to_supported_formats_and_ignore_unknown_settings(tmp_path):
     from hospital_marketing.documents import SUPPORTED_EXTENSIONS
 

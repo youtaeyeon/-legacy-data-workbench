@@ -98,6 +98,47 @@ def check_cli_status(cli: str) -> CLIStatus:
     return CLIStatus(True, executable, version, None)
 
 
+def check_cli_auth_status(cli: str) -> tuple[bool | None, str | None]:
+    """Read local CLI authentication state without starting a model request."""
+    if cli not in SUPPORTED_CLIS:
+        raise ValueError(f"지원하지 않는 CLI입니다: {cli}")
+    if cli == "gemini":
+        credentials = Path.home() / ".gemini" / "oauth_creds.json"
+        authenticated = bool(os.environ.get("GEMINI_API_KEY")) or credentials.is_file()
+        return authenticated, None if authenticated else "gemini CLI 로그인이 필요합니다."
+
+    executable = find_executable(cli)
+    if not executable:
+        return False, f"{cli} CLI가 설치되지 않았습니다."
+    command = (
+        [executable, "auth", "status", "--text"]
+        if cli == "claude"
+        else [executable, "login", "status"]
+    )
+    run_options = {}
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        run_options = {"creationflags": subprocess.CREATE_NO_WINDOW, "startupinfo": startupinfo}
+    try:
+        completed = subprocess.run(
+            command,
+            shell=False,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=VERSION_TIMEOUT_SECONDS,
+            check=False,
+            **run_options,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None, f"{cli} 로그인 상태를 확인하지 못했습니다."
+    if completed.returncode == 0:
+        return True, None
+    return False, f"{cli} CLI 로그인이 필요합니다."
+
+
 def check_all_cli_statuses() -> dict[str, CLIStatus]:
     return {cli: check_cli_status(cli) for cli in SUPPORTED_CLIS}
 

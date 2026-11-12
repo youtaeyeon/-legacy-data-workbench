@@ -834,10 +834,12 @@ class SettingsDialog(QtWidgets.QDialog):
         elif succeeded:
             self.connection_status_label.setText(message)
             self.login_cli_button.setVisible(False)
+            self._save_connection_check(True)
         else:
             safe_message = _sanitize_connection_error(message, api_key)
             attempt_summary = _format_connection_attempts(attempts, api_key)
             self.connection_status_label.setText(f"연결 실패: {attempt_summary} · {safe_message}")
+            self._save_connection_check(False)
             self._record_connection_failure(safe_message, attempts, api_key)
             self.login_cli_button.setVisible(
                 _is_windows()
@@ -846,6 +848,18 @@ class SettingsDialog(QtWidgets.QDialog):
             )
             if self.login_cli_button.isVisible():
                 self.message_label.setText("CLI 인증이 필요합니다. [CLI 로그인]을 눌러 로그인한 뒤 연결 테스트를 다시 하세요.")
+
+    def _save_connection_check(self, succeeded: bool) -> None:
+        settings = self.settings_store.load()
+        self.settings_store.save(replace(
+            settings,
+            last_connection_check={
+                "provider_id": self._connection_provider_id,
+                "model_id": self._connection_model_id,
+                "succeeded": succeeded,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            },
+        ))
 
     def _get_connection_error_log_path(self) -> Path:
         settings = self.settings_store.load()

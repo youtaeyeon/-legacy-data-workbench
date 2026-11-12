@@ -29,6 +29,29 @@ def test_cli_status_reports_first_version_line_and_safe_command(monkeypatch, cli
     assert calls[0][1]["timeout"] == 10
 
 
+@pytest.mark.parametrize(
+    "cli,command",
+    [("claude", ["/usr/bin/claude", "auth", "status", "--text"]),
+     ("codex", ["/usr/bin/codex", "login", "status"])],
+)
+def test_cli_auth_status_uses_read_only_login_check(monkeypatch, cli, command):
+    calls = []
+    monkeypatch.setattr(cli_status, "find_executable", lambda _cli: f"/usr/bin/{cli}")
+    monkeypatch.setattr(
+        cli_status.subprocess,
+        "run",
+        lambda actual, **kwargs: calls.append((actual, kwargs)) or subprocess.CompletedProcess(actual, 0, "Logged in", ""),
+    )
+
+    authenticated, error = cli_status.check_cli_auth_status(cli)
+
+    assert authenticated is True
+    assert error is None
+    assert calls[0][0] == command
+    assert calls[0][1]["shell"] is False
+    assert calls[0][1]["timeout"] == 10
+
+
 def test_cli_status_reports_missing_executable(monkeypatch):
     monkeypatch.setattr(cli_status.shutil, "which", lambda _name: None)
     monkeypatch.setattr(cli_status, "_known_windows_paths", lambda _cli: ())
