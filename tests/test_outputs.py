@@ -157,6 +157,9 @@ def test_dashboard_separates_summary_and_hospital_management_and_includes_import
     }
     assert 'data-view="dashboard"' in html and 'data-view="hospitals"' in html
     assert "채널 확인 필요" in html
+    assert "stopImmediatePropagation" not in html
+    assert "data-hospital-id" in html
+    assert "renderDashboardKpis" in html
     repository.close()
 
 
