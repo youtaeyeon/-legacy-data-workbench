@@ -82,6 +82,182 @@ def test_workflow_cancel_event_stops_before_next_hospital(tmp_path):
     assert result.channel_collection_cancelled
 
 
+def test_workflow_cancellation_skips_classification_and_regenerates_outputs(tmp_path):
+    from threading import Event
+    from hospital_marketing.ai.base import RelevanceResult
+    from hospital_marketing.domain import ContentItem, Hospital
+    from hospital_marketing.repository import Repository
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_hospital(Hospital("MOCK-001", "목업 병원"))
+    repository.add_content(ContentItem("MOCK-001", "YouTube", "제목", "https://example.test", "", None, None, "pending", None))
+    repository.close()
+
+    class Provider:
+        classify_calls = 0
+        summarize_calls = 0
+        def classify_content(self, *_args):
+            self.classify_calls += 1
+            return RelevanceResult("relevant", "제품", "근거")
+        def summarize_script(self, *_args):
+            self.summarize_calls += 1
+            return "요약"
+        def summarize_hospital(self, *_args): return "요약"
+        def convert_document_to_markdown(self, _name, text): return text
+
+    provider = Provider()
+    class Registry:
+        def create(self, *_args, **_kwargs): return provider
+
+    cancel = Event()
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=Registry()).run(
+        source, target, cancel_event=cancel,
+        on_progress=lambda item: cancel.set() if item.stage == "classification" else None,
+    )
+
+    assert result.cancelled_stage == "classification"
+    assert provider.classify_calls == provider.summarize_calls == 0
+    assert result.outputs.dashboard.is_file()
+    assert result.outputs.excel.is_file()
+    assert (target / "wiki" / "MOCK-001.md").is_file()
+
+
+@pytest.mark.parametrize("cancel_stage", ["files", "outputs"])
+def test_workflow_cancel_stops_remaining_ai_calls(tmp_path, cancel_stage):
+    from threading import Event
+    from hospital_marketing.ai.base import RelevanceResult
+    from hospital_marketing.domain import Hospital
+    from hospital_marketing.repository import Repository
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    (source / "notes.txt").write_text("목업 원본", encoding="utf-8")
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_hospital(Hospital("MOCK-001", "목업 병원"))
+    repository.close()
+
+    class Provider:
+        conversion_calls = 0
+        hospital_summary_calls = 0
+        def convert_document_to_markdown(self, _name, text):
+            self.conversion_calls += 1
+            return text
+        def classify_content(self, *_args): return RelevanceResult("relevant", "제품", "근거")
+        def summarize_script(self, *_args): return "요약"
+        def summarize_hospital(self, hospital):
+            self.hospital_summary_calls += 1
+            return hospital.hospital_name
+
+    provider = Provider()
+    class Registry:
+        def create(self, *_args, **_kwargs): return provider
+
+    cancel = Event()
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=Registry()).run(
+        source, target, cancel_event=cancel,
+        on_progress=lambda progress: cancel.set() if progress.stage == cancel_stage else None,
+    )
+
+    assert result.cancelled_stage == cancel_stage
+    assert result.outputs.dashboard.is_file()
+    if cancel_stage == "files":
+        assert provider.conversion_calls == 0
+    else:
+        assert provider.hospital_summary_calls == 0
+
+
+def test_workflow_cancellation_during_channels_stops_collection_and_classification(tmp_path):
+    from threading import Event
+    from hospital_marketing.ai.mock import MockProvider
+    from hospital_marketing.ai.registry import ProviderRegistry
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    target = tmp_path / "target"
+    cancel = Event()
+    calls = []
+
+    class CancellingProvider(MockProvider):
+        def discover_channels_and_posts(self, hospital):
+            calls.append(hospital.hospital_id)
+            return super().discover_channels_and_posts(hospital)
+
+        def classify_content(self, item, products=()):
+            pytest.fail("취소 뒤에는 AI 분류를 호출하지 않습니다.")
+
+    registry = ProviderRegistry({"mock": lambda **_: CancellingProvider()})
+    result = ImportWorkflow(
+        settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=registry
+    ).run(
+        fixtures / "initial", target, mock_mode=True, cancel_event=cancel,
+        on_progress=lambda item: cancel.set() if item.stage == "channels" else None,
+    )
+
+    assert len(calls) == 1
+    assert result.cancelled_stage == "channels"
+    assert result.outputs.dashboard.is_file()
+
+
+def test_workflow_cancellation_during_summaries_stops_after_first_script(tmp_path):
+    from threading import Event
+    from hospital_marketing.domain import ContentScript
+    from hospital_marketing.repository import Repository
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_script(ContentScript("https://example.test/1", "본문 1", "", "미활용", None))
+    repository.upsert_script(ContentScript("https://example.test/2", "본문 2", "", "미활용", None))
+    repository.close()
+    cancel = Event()
+
+    class Provider:
+        summarize_calls = 0
+
+        def summarize_script(self, _text):
+            self.summarize_calls += 1
+            cancel.set()
+            return "목업 요약"
+
+        def summarize_hospital(self, hospital):
+            return hospital.hospital_name
+
+        def convert_document_to_markdown(self, _name, text):
+            return text
+
+    provider = Provider()
+
+    class Registry:
+        def create(self, *_args, **_kwargs):
+            return provider
+
+    result = ImportWorkflow(
+        settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=Registry()
+    ).run(source, target, cancel_event=cancel)
+
+    assert provider.summarize_calls == 1
+    assert result.cancelled_stage == "summaries"
+    assert result.outputs.dashboard.is_file()
+
+
+def test_dashboard_includes_current_app_generator_metadata(tmp_path):
+    from hospital_marketing.version import APP_VERSION
+    from hospital_marketing.repository import Repository
+
+    target = tmp_path / "target"
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json")).run(tmp_path / "source", target)
+    repository.close()
+    html = result.outputs.dashboard.read_text(encoding="utf-8")
+    assert f'<meta name="generator" content="hospital-marketing {APP_VERSION}">' in html
+
+
 def test_channel_discovery_failure_is_recorded_and_other_hospitals_continue(tmp_path):
     from hospital_marketing.ai.registry import ProviderRegistry
     from hospital_marketing.ai.mock import MockProvider

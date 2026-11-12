@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 
 from threading import Event
 from pathlib import Path
@@ -88,6 +89,30 @@ class FakeWorkflow:
             classified_count=self.classified_count,
             needs_review_count=0,
         )
+
+
+def test_cancelled_import_shows_stage_status_and_reenables_new_dashboard(tmp_path):
+    _app()
+    dashboard = tmp_path / "target" / "dashboard" / "index.html"
+    workflow = FakeWorkflow(dashboard)
+
+    class CancelledWorkflow(FakeWorkflow):
+        def run(self, *args, **kwargs):
+            return replace(super().run(*args, **kwargs), cancelled_stage="classification")
+
+    workflow = CancelledWorkflow(dashboard)
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), cast(ImportWorkflow, workflow))
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(tmp_path / "target"))
+
+    window.run_button.click()
+    assert not window.open_dashboard_button.isEnabled()
+    _wait_for_import(window)
+
+    assert window.status_label.text() == "취소됨 · AI 분류 · 처리된 결과까지 저장했습니다"
+    assert window.open_dashboard_button.isEnabled()
+    assert window.dashboard_path == dashboard
+    window.close()
 
 
 def test_main_window_requires_paths_before_import(tmp_path):
@@ -308,10 +333,12 @@ def test_main_window_status_redacts_masked_provider_key(tmp_path):
 
 
 def test_open_dashboard_uses_injected_open_handler(tmp_path):
+    from hospital_marketing.version import APP_VERSION
+
     _app()
     dashboard = tmp_path / "dashboard" / "index.html"
     dashboard.parent.mkdir(parents=True)
-    dashboard.write_text("<html></html>", encoding="utf-8")
+    dashboard.write_text(f'<meta name="generator" content="hospital-marketing {APP_VERSION}">', encoding="utf-8")
     opened = []
     settings_store = SettingsStore(tmp_path / "settings.json")
     settings_store.save(AppSettings(target_dir=tmp_path))
@@ -320,6 +347,25 @@ def test_open_dashboard_uses_injected_open_handler(tmp_path):
     window.open_dashboard_button.click()
 
     assert opened == [dashboard]
+
+
+@pytest.mark.parametrize("html", ["<html></html>", '<meta name="generator" content="hospital-marketing 0.0.0">'])
+def test_open_dashboard_warns_for_legacy_or_different_version(tmp_path, monkeypatch, html):
+    _app()
+    dashboard = tmp_path / "dashboard" / "index.html"
+    dashboard.parent.mkdir(parents=True)
+    dashboard.write_text(html, encoding="utf-8")
+    opened, messages = [], []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda _parent, title, text: messages.append((title, text)))
+    settings = SettingsStore(tmp_path / "settings.json")
+    settings.save(AppSettings(target_dir=tmp_path))
+    window = MainWindow(settings, FakeWorkflow(dashboard), open_path=opened.append)
+
+    window.open_dashboard_button.click()
+
+    assert opened == [dashboard]
+    assert messages == [("이전 버전 대시보드", "이전 버전에서 만든 대시보드입니다. 위키를 다시 생성하면 새 화면으로 바뀝니다.")]
+    window.close()
 
 
 def test_settings_dialog_saves_provider_and_key_to_separate_stores(tmp_path, monkeypatch):
@@ -816,6 +862,7 @@ def test_import_runs_off_ui_thread_and_keeps_window_responsive(tmp_path):
     try:
         assert started.wait(2)
         assert not window.run_button.isEnabled()
+        assert not window.open_dashboard_button.isEnabled()
         assert window.import_progress.isVisible()
         assert "처리 중" in window.status_label.text()
         _app().processEvents()
@@ -854,6 +901,7 @@ def test_import_progress_bar_shows_percentage_and_stage_then_hides(tmp_path):
     assert "2/4 단계" in window.import_progress_label.text()
     assert "3/14" in window.import_progress_label.text()
     window._cancel_import()
+    assert not window.open_dashboard_button.isEnabled()
     assert window.import_progress.format() == "취소 중…"
     assert window.import_progress_label.text() == "취소 중…"
     window._on_import_finished(None, RuntimeError("failed"))
