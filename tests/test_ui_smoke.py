@@ -1,4 +1,5 @@
 import os
+from dataclasses import replace
 
 from threading import Event
 from pathlib import Path
@@ -79,6 +80,30 @@ class FakeWorkflow:
             classified_count=4,
             needs_review_count=0,
         )
+
+
+def test_cancelled_import_shows_stage_status_and_reenables_new_dashboard(tmp_path):
+    _app()
+    dashboard = tmp_path / "target" / "dashboard" / "index.html"
+    workflow = FakeWorkflow(dashboard)
+
+    class CancelledWorkflow(FakeWorkflow):
+        def run(self, *args, **kwargs):
+            return replace(super().run(*args, **kwargs), cancelled_stage="classification")
+
+    workflow = CancelledWorkflow(dashboard)
+    window = MainWindow(SettingsStore(tmp_path / "settings.json"), cast(ImportWorkflow, workflow))
+    window.source_path_edit.setText(str(tmp_path / "source"))
+    window.target_path_edit.setText(str(tmp_path / "target"))
+
+    window.run_button.click()
+    assert not window.open_dashboard_button.isEnabled()
+    _wait_for_import(window)
+
+    assert window.status_label.text() == "취소됨 · AI 분류 · 처리된 결과까지 저장했습니다"
+    assert window.open_dashboard_button.isEnabled()
+    assert window.dashboard_path == dashboard
+    window.close()
 
 
 def test_main_window_requires_paths_before_import(tmp_path):

@@ -170,6 +170,81 @@ def test_workflow_cancel_stops_remaining_ai_calls(tmp_path, cancel_stage):
         assert provider.hospital_summary_calls == 0
 
 
+def test_workflow_cancellation_during_channels_stops_collection_and_classification(tmp_path):
+    from threading import Event
+    from hospital_marketing.ai.mock import MockProvider
+    from hospital_marketing.ai.registry import ProviderRegistry
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+    target = tmp_path / "target"
+    cancel = Event()
+    calls = []
+
+    class CancellingProvider(MockProvider):
+        def discover_channels_and_posts(self, hospital):
+            calls.append(hospital.hospital_id)
+            return super().discover_channels_and_posts(hospital)
+
+        def classify_content(self, item, products=()):
+            pytest.fail("취소 뒤에는 AI 분류를 호출하지 않습니다.")
+
+    registry = ProviderRegistry({"mock": lambda **_: CancellingProvider()})
+    result = ImportWorkflow(
+        settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=registry
+    ).run(
+        fixtures / "initial", target, mock_mode=True, cancel_event=cancel,
+        on_progress=lambda item: cancel.set() if item.stage == "channels" else None,
+    )
+
+    assert len(calls) == 1
+    assert result.cancelled_stage == "channels"
+    assert result.outputs.dashboard.is_file()
+
+
+def test_workflow_cancellation_during_summaries_stops_after_first_script(tmp_path):
+    from threading import Event
+    from hospital_marketing.domain import ContentScript
+    from hospital_marketing.repository import Repository
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_script(ContentScript("https://example.test/1", "본문 1", "", "미활용", None))
+    repository.upsert_script(ContentScript("https://example.test/2", "본문 2", "", "미활용", None))
+    repository.close()
+    cancel = Event()
+
+    class Provider:
+        summarize_calls = 0
+
+        def summarize_script(self, _text):
+            self.summarize_calls += 1
+            cancel.set()
+            return "목업 요약"
+
+        def summarize_hospital(self, hospital):
+            return hospital.hospital_name
+
+        def convert_document_to_markdown(self, _name, text):
+            return text
+
+    provider = Provider()
+
+    class Registry:
+        def create(self, *_args, **_kwargs):
+            return provider
+
+    result = ImportWorkflow(
+        settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=Registry()
+    ).run(source, target, cancel_event=cancel)
+
+    assert provider.summarize_calls == 1
+    assert result.cancelled_stage == "summaries"
+    assert result.outputs.dashboard.is_file()
+
+
 def test_dashboard_includes_current_app_generator_metadata(tmp_path):
     from hospital_marketing.version import APP_VERSION
     from hospital_marketing.repository import Repository
