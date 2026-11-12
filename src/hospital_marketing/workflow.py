@@ -117,7 +117,9 @@ class ImportWorkflow:
             document_result = convert_source_documents(
                 source_dir, target_dir, extensions, provider,
                 on_progress=lambda current, total, name: report_progress("files", current, total, f"원본 파일 읽기·문서 변환 · {current}/{total} · {name}"),
+                cancel_event=cancel_event,
             )
+            cancelled_stage = "files" if document_result.cancelled else None
             report.source_dir = str(source_dir)
             report.source_files = document_result.source_files
             report.files_seen = document_result.files_seen
@@ -143,7 +145,6 @@ class ImportWorkflow:
             failure_details: list[dict[str, str]] = []
             skipped_reason = ""
             collection_cancelled = False
-            cancelled_stage = None
             if settings.auto_collect_hospital_channels:
                 discover = getattr(provider, "discover_channels_and_posts", None)
                 supported = callable(discover) and (mock_mode or provider_id == "mock" or
@@ -157,7 +158,7 @@ class ImportWorkflow:
                     for index, hospital in enumerate(new_hospitals, 1):
                         if cancel_event is not None and cancel_event.is_set():
                             collection_cancelled = True
-                            cancelled_stage = "channels"
+                            cancelled_stage = cancelled_stage or "channels"
                             break
                         report_progress("channels", index, len(new_hospitals), f"신규 병원 채널·게시물 수집 · {index}/{len(new_hospitals)} · {hospital.hospital_name}")
                         try:
@@ -222,10 +223,29 @@ class ImportWorkflow:
                     repository.upsert_script(replace(script, summary=provider.summarize_script(script.script_text)))
 
             output_hospitals = repository.list_hospitals()
+            mock_provider = MockProvider()
+
+            class CancellationAwareProvider:
+                def __getattr__(self, name):
+                    method = getattr(provider, name)
+                    if not callable(method):
+                        return method
+
+                    def call(*args, **kwargs):
+                        nonlocal cancelled_stage
+                        if cancel_event is not None and cancel_event.is_set():
+                            cancelled_stage = cancelled_stage or "outputs"
+                            fallback = getattr(mock_provider, name, None)
+                            if callable(fallback):
+                                return fallback(*args, **kwargs)
+                        return method(*args, **kwargs)
+
+                    return call
+
             outputs = generate_outputs(
                 repository,
                 target_dir,
-                MockProvider() if cancel_event is not None and cancel_event.is_set() else provider,
+                CancellationAwareProvider(),
                 registered_products=products,
                 import_report=report,
                 on_progress=lambda current, total, name: report_progress("outputs", current, total, f"위키·대시보드·엑셀 생성 · {current}/{total} · {name}"),

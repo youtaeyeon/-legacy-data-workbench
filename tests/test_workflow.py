@@ -125,6 +125,51 @@ def test_workflow_cancellation_skips_classification_and_regenerates_outputs(tmp_
     assert (target / "wiki" / "MOCK-001.md").is_file()
 
 
+@pytest.mark.parametrize("cancel_stage", ["files", "outputs"])
+def test_workflow_cancel_stops_remaining_ai_calls(tmp_path, cancel_stage):
+    from threading import Event
+    from hospital_marketing.ai.base import RelevanceResult
+    from hospital_marketing.domain import Hospital
+    from hospital_marketing.repository import Repository
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.mkdir()
+    (source / "notes.txt").write_text("목업 원본", encoding="utf-8")
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_hospital(Hospital("MOCK-001", "목업 병원"))
+    repository.close()
+
+    class Provider:
+        conversion_calls = 0
+        hospital_summary_calls = 0
+        def convert_document_to_markdown(self, _name, text):
+            self.conversion_calls += 1
+            return text
+        def classify_content(self, *_args): return RelevanceResult("relevant", "제품", "근거")
+        def summarize_script(self, *_args): return "요약"
+        def summarize_hospital(self, hospital):
+            self.hospital_summary_calls += 1
+            return hospital.hospital_name
+
+    provider = Provider()
+    class Registry:
+        def create(self, *_args, **_kwargs): return provider
+
+    cancel = Event()
+    result = ImportWorkflow(settings_store=SettingsStore(tmp_path / "settings.json"), provider_registry=Registry()).run(
+        source, target, cancel_event=cancel,
+        on_progress=lambda progress: cancel.set() if progress.stage == cancel_stage else None,
+    )
+
+    assert result.cancelled_stage == cancel_stage
+    assert result.outputs.dashboard.is_file()
+    if cancel_stage == "files":
+        assert provider.conversion_calls == 0
+    else:
+        assert provider.hospital_summary_calls == 0
+
+
 def test_dashboard_includes_current_app_generator_metadata(tmp_path):
     from hospital_marketing.version import APP_VERSION
     from hospital_marketing.repository import Repository

@@ -693,6 +693,7 @@ def test_import_runs_off_ui_thread_and_keeps_window_responsive(tmp_path):
     try:
         assert started.wait(2)
         assert not window.run_button.isEnabled()
+        assert not window.open_dashboard_button.isEnabled()
         assert window.import_progress.isVisible()
         assert "처리 중" in window.status_label.text()
         _app().processEvents()
@@ -731,6 +732,7 @@ def test_import_progress_bar_shows_percentage_and_stage_then_hides(tmp_path):
     assert "2/4 단계" in window.import_progress_label.text()
     assert "3/14" in window.import_progress_label.text()
     window._cancel_import()
+    assert not window.open_dashboard_button.isEnabled()
     assert window.import_progress.format() == "취소 중…"
     assert window.import_progress_label.text() == "취소 중…"
     window._on_import_finished(None, RuntimeError("failed"))
