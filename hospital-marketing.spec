@@ -22,7 +22,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="HospitalMarketingMVP",
+    name="marketing_dashboard",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -35,5 +35,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="HospitalMarketingMVP",
+    name="marketing_dashboard",
 )

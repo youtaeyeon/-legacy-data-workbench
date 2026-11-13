@@ -509,7 +509,7 @@ def test_main_window_groups_paths_and_highlights_primary_action(tmp_path):
     _app()
     window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"))
 
-    assert window.title_label.text() == "병원 마케팅 위키"
+    assert window.title_label.text() == "병원 마케팅 대시보드"
     assert window.paths_group.title() == "1. 폴더 설정"
     assert "#f3eee2" in window.centralWidget().styleSheet()
     assert window.run_button.objectName() == "run_import_button"
