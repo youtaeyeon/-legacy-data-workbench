@@ -222,7 +222,7 @@ winget install --id GitHub.cli -e
 3. 의존성이 바뀌었을 수 있으니 `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"`
 4. 전체 테스트를 실행합니다(위 Windows 테스트 명령).
 5. 앱 실행 확인: `.\.venv\Scripts\python.exe -m hospital_marketing.app`를 실행해 창이 뜨는지 봅니다. 사용자가 함께 있으면 `data\source\20261102` → `20261103` → `20261106`을 차례로 가져와 대시보드를 열어 달라고 요청합니다.
-6. 사용자가 EXE 확인을 원하면 `.\scripts\package_windows.ps1`로 빌드하고 `dist-win\HospitalMarketingMVP\HospitalMarketingMVP.exe`를 실행합니다.
+6. 사용자가 EXE 확인을 원하면 `.\scripts\package_windows.ps1`로 빌드하고 `dist-win\marketing_dashboard\marketing_dashboard.exe`를 실행합니다.
 7. 결과를 보고합니다. 대상은 `needs-windows-test` 라벨이 붙은 merge된 PR 전부입니다.
    - **성공:** 각 PR에 `Windows 테스트 통과 (<커밋 해시>): pytest N개 통과, 앱 실행 확인, PR별 확인 항목` 댓글을 남깁니다. 그다음 `scripts\package_windows.ps1`로 EXE를 **로컬에만** 빌드합니다(릴리스하지 않음). 각 PR에서 `needs-windows-test`를 떼고 `ready-for-user-test`를 붙입니다. 마지막으로 Windows 알림(토스트)으로 고객에게 "테스트할 EXE 준비됨: <EXE 경로>, <PR 목록>"을 알립니다.
    - **실패:** 이슈를 만들고, 원인이 된 PR에서 `needs-windows-test`를 뗍니다.
@@ -262,14 +262,14 @@ EXE와 빌드 결과물(`dist-win/`, `build-win/`)은 git에 커밋하지 않습
    ```powershell
    .\scripts\package_windows.ps1
    ```
-4. 빌드한 EXE를 직접 실행해 창이 뜨는지 확인합니다: `dist-win\HospitalMarketingMVP\HospitalMarketingMVP.exe`
+4. 빌드한 EXE를 직접 실행해 창이 뜨는지 확인합니다: `dist-win\marketing_dashboard\marketing_dashboard.exe`
 5. 폴더째 zip으로 묶습니다. EXE 혼자서는 실행되지 않고 `_internal\` 폴더가 함께 있어야 합니다.
    ```powershell
-   $Zip = "dist-win\HospitalMarketingMVP-$Tag-win64.zip"
-   Compress-Archive -Path dist-win\HospitalMarketingMVP -DestinationPath $Zip -Force
+   $Zip = "dist-win\marketing_dashboard-$Tag-win64.zip"
+   Compress-Archive -Path dist-win\marketing_dashboard -DestinationPath $Zip -Force
    ```
 6. 릴리스를 만듭니다.
    ```powershell
-   gh release create $Tag $Zip --target $Commit --title "HospitalMarketingMVP $Tag" --notes "Windows 64bit 실행 파일. zip을 풀고 HospitalMarketingMVP\HospitalMarketingMVP.exe를 실행하세요. 빌드 커밋: $Commit. 테스트용 원본 데이터는 저장소의 data\source 폴더에 있습니다."
+   gh release create $Tag $Zip --target $Commit --title "병원 마케팅 대시보드 $Tag" --notes "Windows 64bit 실행 파일. zip을 풀고 marketing_dashboard\marketing_dashboard.exe를 실행하세요. 빌드 커밋: $Commit. 테스트용 원본 데이터는 저장소의 data\source 폴더에 있습니다."
    ```
 7. 사용자에게 릴리스 URL(`gh release view $Tag --web` 또는 `--json url`)과 zip 크기를 알립니다.
