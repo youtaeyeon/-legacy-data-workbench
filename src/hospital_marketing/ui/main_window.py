@@ -111,7 +111,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._close_when_import_finishes = False
         self._cancel_event = Event()
         self._ai_status_worker: _AIStatusWorker | None = None
-        self.setWindowTitle(f"병원 마케팅 위키 MVP · v{APP_VERSION}")
+        self.setWindowTitle(f"병원 마케팅 대시보드 · v{APP_VERSION}")
         self.resize(900, 500)
         self.setMinimumWidth(780)
 
@@ -143,7 +143,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(28, 22, 28, 22)
         layout.setSpacing(12)
         title_row = QtWidgets.QHBoxLayout()
-        self.title_label = QtWidgets.QLabel("병원 마케팅 위키")
+        self.title_label = QtWidgets.QLabel("병원 마케팅 대시보드")
         self.title_label.setObjectName("appTitle")
         title_row.addWidget(self.title_label)
         title_row.addStretch(1)
@@ -159,7 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         title_row.addWidget(self.ai_status_badge, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         layout.addLayout(title_row)
         self._refresh_ai_status()
-        subtitle = QtWidgets.QLabel("선택한 원본 파일을 읽어 병원별 Markdown 위키와 검색형 대시보드를 생성합니다. 목업 데이터로 먼저 확인하세요.")
+        subtitle = QtWidgets.QLabel("선택한 원본 파일을 읽어 병원별 마케팅 대시보드와 위키·엑셀 자료를 생성합니다. 목업 데이터로 먼저 확인하세요.")
         subtitle.setObjectName("appSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)

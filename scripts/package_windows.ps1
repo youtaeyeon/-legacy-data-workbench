@@ -31,7 +31,7 @@ try {
     & $VenvPython -m PyInstaller --noconfirm --clean --distpath $DistPath --workpath $WorkPath hospital-marketing.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller 패키징에 실패했습니다." }
 
-    $Executable = Join-Path $DistPath "HospitalMarketingMVP\HospitalMarketingMVP.exe"
+    $Executable = Join-Path $DistPath "marketing_dashboard\marketing_dashboard.exe"
     if (-not (Test-Path $Executable)) { throw "EXE 파일이 생성되지 않았습니다: $Executable" }
     Write-Output "Windows 앱 생성 완료: $Executable"
 }

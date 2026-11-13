@@ -1,6 +1,6 @@
-# 병원 마케팅 위키 MVP
+# 병원 마케팅 대시보드
 
-영업부 Excel·CSV와 Word·PowerPoint·PDF 등 여러 원본 파일을 읽어 마케팅팀 병원 위키와 대시보드를 만드는 과제용 Windows 앱입니다. 실제 회사 자료 대신 가상 목업 데이터만 사용합니다.
+영업부 Excel·CSV와 Word·PowerPoint·PDF 등 여러 원본 파일을 읽어 마케팅팀 병원별 대시보드와 위키를 만드는 과제용 Windows 앱입니다. 실제 회사 자료 대신 가상 목업 데이터만 사용합니다.
 
 ## 기능
 
@@ -87,7 +87,7 @@ Windows 환경에서 Python 3.12 이상을 설치한 뒤 PowerShell에서 실행
 .\scripts\package_windows.ps1
 ```
 
-생성 경로: `dist-win\HospitalMarketingMVP\HospitalMarketingMVP.exe`
+생성 경로: `dist-win\marketing_dashboard\marketing_dashboard.exe`
 
 Windows EXE는 Windows에서 빌드해야 합니다. WSL의 Linux 빌드 결과는 Windows EXE가 아닙니다. 패키징 후 실행해 source/target 폴더 선택, 목업 가져오기, 대시보드 열기까지 확인하세요.
 
@@ -97,4 +97,4 @@ wsl-hermes(개발) → wsl-claude(검토·main merge) → windows-claude(Windows
 
 ## 실행 파일 받기
 
-Windows 실행 파일(EXE)은 저장소에 포함하지 않고 [GitHub Releases](https://github.com/youtaeyeon/-legacy-data-workbench/releases)에 zip으로 올립니다. zip을 풀고 `HospitalMarketingMVP\HospitalMarketingMVP.exe`를 실행하세요.
+Windows 실행 파일(EXE)은 저장소에 포함하지 않고 [GitHub Releases](https://github.com/youtaeyeon/-legacy-data-workbench/releases)에 zip으로 올립니다. zip을 풀고 `marketing_dashboard\marketing_dashboard.exe`를 실행하세요.
