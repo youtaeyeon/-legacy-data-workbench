@@ -72,7 +72,9 @@ def test_approving_candidate_preserves_summaries_and_product_keywords_without_ai
             return f"보존할 AI 요약: {hospital.hospital_name}"
 
     provider = SummaryProvider()
-    channel_dialog_module.generate_outputs(repository, target, provider, registered_products=("사용자 지정 제품",))
+    channel_dialog_module.generate_outputs(
+        repository, target, provider, registered_products=("사용자 지정 제품",), reuse_summaries=True
+    )
     assert provider.calls == 2
     repository.connection.execute("DELETE FROM hospital_summaries")
     dialog = ChannelCandidatesDialog(

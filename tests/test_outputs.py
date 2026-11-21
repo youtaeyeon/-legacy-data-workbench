@@ -38,6 +38,49 @@ def test_generates_hospital_markdown_with_ai_summary_and_related_content_only(tm
     assert "울트라클리어 소개" in markdown
     assert "무관한 내용" not in markdown
     assert manifest.markdown_files == [tmp_path / "target" / "wiki" / "MOCK-001.md"]
+
+
+def test_standard_output_generation_refreshes_summary_even_when_cached(tmp_path):
+    repository = _repository(tmp_path)
+    target = tmp_path / "target"
+
+    class SummaryProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def summarize_hospital(self, hospital):
+            self.calls += 1
+            return f"새 요약: {hospital.region}"
+
+    provider = SummaryProvider()
+    generate_outputs(repository, target, provider)
+    repository.upsert_hospital(Hospital("MOCK-001", "목업 병원 001", "가상권역 B"))
+    generate_outputs(repository, target, provider)
+
+    markdown = (target / "wiki" / "MOCK-001.md").read_text(encoding="utf-8")
+    assert provider.calls == 2
+    assert "> 새 요약: 가상권역 B" in markdown
+    assert repository.get_hospital_summary("MOCK-001") == "새 요약: 가상권역 B"
+    repository.close()
+
+
+def test_standard_output_generation_calls_provider_despite_saved_summary(tmp_path):
+    repository = _repository(tmp_path)
+    repository.save_hospital_summary("MOCK-001", "이전 요약")
+
+    class SummaryProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def summarize_hospital(self, hospital):
+            self.calls += 1
+            return "새 요약"
+
+    provider = SummaryProvider()
+    generate_outputs(repository, tmp_path / "target", provider)
+
+    assert provider.calls == 1
+    assert repository.get_hospital_summary("MOCK-001") == "새 요약"
     repository.close()
 
 
