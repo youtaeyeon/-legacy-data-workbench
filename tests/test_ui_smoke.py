@@ -514,6 +514,18 @@ def test_saving_product_keywords_refreshes_dashboard(tmp_path, monkeypatch):
 
     _app()
     target = tmp_path / "target"
+    report_dir = target / "reports"
+    report_dir.mkdir(parents=True)
+    (report_dir / "last-import.json").write_text(
+        json.dumps({
+            "inserted_count": 1,
+            "updated_count": 2,
+            "unchanged_count": 3,
+            "inserted_hospital_ids": ["MOCK-KEYWORD"],
+            "updated_hospital_ids": [],
+        }),
+        encoding="utf-8",
+    )
     repository = Repository(target / "data" / "app.db")
     repository.initialize()
     repository.upsert_hospital(Hospital("MOCK-KEYWORD", "목업 병원"))
@@ -538,6 +550,13 @@ def test_saving_product_keywords_refreshes_dashboard(tmp_path, monkeypatch):
     dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
     payload = dashboard.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
     assert json.loads(payload)["product_keywords"] == ["새 제품"]
+    assert json.loads(payload)["import_summary"] == {
+        "inserted_count": 1,
+        "updated_count": 2,
+        "unchanged_count": 3,
+        "inserted_hospital_ids": ["MOCK-KEYWORD"],
+        "updated_hospital_ids": [],
+    }
     assert "MOCK-KEYWORD" in dashboard
     window.close()
 

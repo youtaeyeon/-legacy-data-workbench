@@ -88,6 +88,20 @@ const openHospital=(h,source)=>transitionTo(()=>{setViewNow('hospitals');showDet
     return template.replace("__DASHBOARD_JSON_DATA__", payload).replace("__APP_VERSION__", APP_VERSION)
 
 
+def _last_import_report(target_dir: Path) -> ImportReport | None:
+    try:
+        data = json.loads((Path(target_dir) / "reports" / "last-import.json").read_text(encoding="utf-8"))
+        return ImportReport(
+            inserted_count=data["inserted_count"],
+            updated_count=data["updated_count"],
+            unchanged_count=data["unchanged_count"],
+            inserted_hospital_ids=data["inserted_hospital_ids"],
+            updated_hospital_ids=data["updated_hospital_ids"],
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def render_dashboard(
     repository: Repository,
     output_path: Path,
@@ -95,6 +109,8 @@ def render_dashboard(
     registered_products: Sequence[str] = DEFAULT_PRODUCTS,
     import_report: ImportReport | None = None,
 ) -> Path:
+    if import_report is None:
+        import_report = _last_import_report(Path(output_path).parent.parent)
     scripts_by_url = {script.content_url: script for script in repository.list_scripts()}
     hospitals = [_record(repository, hospital, scripts_by_url) for hospital in repository.list_hospitals()]
     payload = json.dumps(
