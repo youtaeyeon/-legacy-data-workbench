@@ -33,6 +33,30 @@ def test_workflow_initial_and_weekly_runs_persist_and_regenerate_outputs(tmp_pat
     assert "api_key" not in json.dumps(report)
 
 
+def test_dashboard_is_refreshed_after_import_before_classification_failure(tmp_path):
+    from hospital_marketing.ai.mock import MockProvider
+    from hospital_marketing.ai.registry import ProviderRegistry
+
+    fixtures = tmp_path / "fixtures"
+    build_fixtures(fixtures)
+
+    class FailingProvider(MockProvider):
+        def classify_content(self, *_args, **_kwargs):
+            raise RuntimeError("mock classification failure")
+
+    workflow = ImportWorkflow(
+        settings_store=SettingsStore(tmp_path / "settings.json"),
+        provider_registry=ProviderRegistry({"mock": lambda **_: FailingProvider()}),
+    )
+    target = tmp_path / "target"
+
+    with pytest.raises(RuntimeError, match="mock classification failure"):
+        workflow.run(fixtures / "initial", target, mock_mode=True)
+
+    dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
+    assert "MOCK-001" in dashboard
+
+
 def test_mock_workflow_collects_channels_and_recent_posts_only_for_new_hospitals(tmp_path):
     from hospital_marketing.repository import Repository
 

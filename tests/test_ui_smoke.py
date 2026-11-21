@@ -505,6 +505,62 @@ def test_main_window_keyword_dialog_saves_changes_and_import_preserves_them(tmp_
     assert settings_store.load().product_keywords == updated_keywords
 
 
+def test_saving_product_keywords_refreshes_dashboard(tmp_path, monkeypatch):
+    import json
+    from hospital_marketing.domain import Hospital
+    from hospital_marketing.repository import Repository
+    from hospital_marketing.settings import ProductKeyword
+    import hospital_marketing.ui.main_window as main_window_module
+
+    _app()
+    target = tmp_path / "target"
+    report_dir = target / "reports"
+    report_dir.mkdir(parents=True)
+    (report_dir / "last-import.json").write_text(
+        json.dumps({
+            "inserted_count": 1,
+            "updated_count": 2,
+            "unchanged_count": 3,
+            "inserted_hospital_ids": ["MOCK-KEYWORD"],
+            "updated_hospital_ids": [],
+        }),
+        encoding="utf-8",
+    )
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    repository.upsert_hospital(Hospital("MOCK-KEYWORD", "목업 병원"))
+    repository.close()
+    settings_store = SettingsStore(tmp_path / "settings.json")
+    settings_store.save(AppSettings(target_dir=target, product_keywords=(ProductKeyword("기존", True),)))
+
+    class AcceptedDialog:
+        def __init__(self, *_args):
+            pass
+
+        def exec(self):
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        def keywords(self):
+            return (ProductKeyword("새 제품", True),)
+
+    monkeypatch.setattr(main_window_module, "ProductKeywordsDialog", AcceptedDialog)
+    window = MainWindow(settings_store, FakeWorkflow(target / "dashboard" / "index.html"))
+    window._open_product_keywords()
+
+    dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
+    payload = dashboard.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
+    assert json.loads(payload)["product_keywords"] == ["새 제품"]
+    assert json.loads(payload)["import_summary"] == {
+        "inserted_count": 1,
+        "updated_count": 2,
+        "unchanged_count": 3,
+        "inserted_hospital_ids": ["MOCK-KEYWORD"],
+        "updated_hospital_ids": [],
+    }
+    assert "MOCK-KEYWORD" in dashboard
+    window.close()
+
+
 def test_main_window_groups_paths_and_highlights_primary_action(tmp_path):
     _app()
     window = MainWindow(SettingsStore(tmp_path / "settings.json"), FakeWorkflow(tmp_path / "target" / "dashboard" / "index.html"))

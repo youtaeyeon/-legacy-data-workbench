@@ -25,6 +25,8 @@ from ..documents.size_warnings import (
     format_large_source_file_prompt,
 )
 from ..settings import AppSettings, SettingsStore
+from ..outputs.dashboard import refresh_dashboard
+from ..repository import Repository
 
 from ..version import APP_VERSION
 from ..workflow import ImportWorkflow, WorkflowProgress
@@ -388,7 +390,20 @@ class MainWindow(QtWidgets.QMainWindow):
         settings = self.settings_store.load()
         dialog = ProductKeywordsDialog(settings.product_keywords, self)
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-            self.settings_store.save(replace(settings, product_keywords=dialog.keywords()))
+            updated = replace(settings, product_keywords=dialog.keywords())
+            self.settings_store.save(updated)
+            if updated.target_dir is not None:
+                repository = Repository(updated.target_dir / "data" / "app.db")
+                try:
+                    repository.initialize()
+                    registered_products = tuple(
+                        keyword.term for keyword in updated.product_keywords if keyword.enabled
+                    )
+                    refresh_dashboard(repository, updated.target_dir, registered_products=registered_products)
+                except OSError:
+                    self.status_label.setText("제품 키워드는 저장했지만 대시보드 갱신에 실패했습니다.")
+                finally:
+                    repository.close()
 
     def _confirm_large_source_files(self, files: list[LargeSourceFile]) -> bool:
         message_box = QtWidgets.QMessageBox(self)

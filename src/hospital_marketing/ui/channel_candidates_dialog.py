@@ -9,6 +9,7 @@ from ..domain import Hospital
 from ..providers import ProviderRequestError
 from ..repository import Repository
 from ..ai.mock import MockProvider
+from ..outputs.dashboard import refresh_dashboard
 from ..outputs.generate import generate_outputs
 
 
@@ -39,12 +40,13 @@ class _DiscoveryWorker(QtCore.QObject):
 
 class ChannelCandidatesDialog(QtWidgets.QDialog):
     def __init__(self, repository: Repository, provider: object, hospitals: list[Hospital], target_dir,
-                 *, batch: bool = False, parent=None):
+                 *, registered_products: tuple[str, ...] = (), batch: bool = False, parent=None):
         super().__init__(parent)
         self.repository = repository
         self.provider = provider
         self.hospitals = hospitals
         self.target_dir = target_dir
+        self.registered_products = registered_products
         self.batch = batch
         self.cancel_event = Event()
         self._worker_thread: QtCore.QThread | None = None
@@ -118,7 +120,16 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
     def _approve(self, candidate_id: int) -> None:
         self.service.approve(candidate_id)
         try:
-            generate_outputs(self.repository, self.target_dir, MockProvider())
+            refresh_dashboard(self.repository, self.target_dir, registered_products=self.registered_products)
+        except OSError:
+            pass
+        try:
+            generate_outputs(
+                self.repository,
+                self.target_dir,
+                MockProvider(),
+                registered_products=self.registered_products,
+            )
         except OSError:
             self.status_label.setText("채널은 등록했지만 결과물 갱신에 실패했습니다. 결과 저장 폴더와 권한을 확인해 주세요.")
             self._reload_candidates()
@@ -128,7 +139,14 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
 
     def _reject(self, candidate_id: int) -> None:
         self.service.reject(candidate_id)
+        try:
+            refresh_dashboard(self.repository, self.target_dir, registered_products=self.registered_products)
+        except OSError:
+            self.status_label.setText("후보는 거절했지만 대시보드 갱신에 실패했습니다. 결과 저장 폴더와 권한을 확인해 주세요.")
+            self._reload_candidates()
+            return
         self._reload_candidates()
+        self.status_label.setText("거절한 후보를 대시보드에 반영했습니다.")
 
     def _start_discovery(self) -> None:
         self.cancel_event.clear()
