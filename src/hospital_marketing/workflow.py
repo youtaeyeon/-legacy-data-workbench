@@ -267,6 +267,7 @@ class ImportWorkflow:
                 registered_products=products,
                 import_report=report,
                 on_progress=lambda current, total, name: report_progress("outputs", current, total, f"위키·대시보드·엑셀 생성 · {current}/{total} · {name}"),
+                should_persist_summaries=lambda: cancel_event is None or not cancel_event.is_set(),
             )
             report_progress("outputs", max(len(output_hospitals), 1), max(len(output_hospitals), 1), "위키·대시보드·엑셀 생성 완료")
             result = WorkflowResult(report, outputs, classified_count, needs_review_count, channels_collected,

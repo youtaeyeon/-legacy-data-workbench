@@ -129,6 +129,7 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
                 self.target_dir,
                 MockProvider(),
                 registered_products=self.registered_products,
+                reuse_summaries=True,
             )
         except OSError:
             self.status_label.setText("채널은 등록했지만 결과물 갱신에 실패했습니다. 결과 저장 폴더와 권한을 확인해 주세요.")

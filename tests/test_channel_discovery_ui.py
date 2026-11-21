@@ -48,6 +48,55 @@ def test_approving_candidate_refreshes_dashboard_wiki_and_excel(tmp_path):
     repository.close()
 
 
+def test_approving_candidate_preserves_summaries_and_product_keywords_without_ai(tmp_path):
+    import json
+
+    _app()
+    target = tmp_path / "target"
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    hospitals = [Hospital("MOCK-APPROVE-A", "목업 병원 A"), Hospital("MOCK-APPROVE-B", "목업 병원 B")]
+    for hospital in hospitals:
+        repository.upsert_hospital(hospital)
+    service = ChannelDiscoveryService(repository)
+    candidate = service.save_candidates(hospitals[0].hospital_id, [
+        ChannelCandidate("유튜브", "목업 채널", "https://youtube.com/@mock", "가상 목업 근거", 0.8)
+    ])[0]
+
+    class SummaryProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def summarize_hospital(self, hospital):
+            self.calls += 1
+            return f"보존할 AI 요약: {hospital.hospital_name}"
+
+    provider = SummaryProvider()
+    channel_dialog_module.generate_outputs(
+        repository, target, provider, registered_products=("사용자 지정 제품",), reuse_summaries=True
+    )
+    assert provider.calls == 2
+    repository.connection.execute("DELETE FROM hospital_summaries")
+    dialog = ChannelCandidatesDialog(
+        repository, provider, hospitals, target, registered_products=("사용자 지정 제품",)
+    )
+    action = dialog.table.cellWidget(0, 6)
+    approve_button = cast(QtWidgets.QPushButton, action.findChild(QtWidgets.QPushButton))
+    approve_button.click()
+
+    for hospital in hospitals:
+        wiki = (target / "wiki" / f"{hospital.hospital_id}.md").read_text(encoding="utf-8")
+        assert f"> 보존할 AI 요약: {hospital.hospital_name}" in wiki
+    assert candidate.url in (target / "wiki" / f"{hospitals[0].hospital_id}.md").read_text(encoding="utf-8")
+    payload = json.loads((target / "dashboard" / "index.html").read_text(encoding="utf-8").split(
+        'id="dashboard-data">', 1
+    )[1].split("</script>", 1)[0])
+    assert payload["product_keywords"] == ["사용자 지정 제품"]
+    assert provider.calls == 2
+    dialog.close()
+    repository.close()
+
+
 def test_rejecting_candidate_refreshes_dashboard(tmp_path):
     import json
 

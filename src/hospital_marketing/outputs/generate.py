@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from collections.abc import Callable, Sequence
 
@@ -30,6 +31,8 @@ def generate_outputs(
     registered_products: Sequence[str] = DEFAULT_PRODUCTS,
     import_report: ImportReport | None = None,
     on_progress: Callable[[int, int, str], None] | None = None,
+    reuse_summaries: bool = False,
+    should_persist_summaries: Callable[[], bool] | None = None,
 ) -> OutputManifest:
     target_dir = Path(target_dir)
     wiki_dir = target_dir / "wiki"
@@ -45,6 +48,16 @@ def generate_outputs(
         if on_progress:
             on_progress(index, len(hospitals), hospital.hospital_name)
         path = wiki_dir / f"{hospital.hospital_id}.md"
+        summary = repository.get_hospital_summary(hospital.hospital_id) if reuse_summaries else None
+        if reuse_summaries and summary is None and path.is_file():
+            existing_lines = path.read_text(encoding="utf-8").splitlines()
+            summary_line = next((line for line in existing_lines[2:] if line.startswith("> ")), None)
+            if summary_line is not None:
+                summary = unescape(summary_line[2:])
+        if summary is None:
+            summary = provider.summarize_hospital(hospital)
+        if should_persist_summaries is None or should_persist_summaries():
+            repository.save_hospital_summary(hospital.hospital_id, summary)
         content = render_hospital_markdown(
             hospital,
             repository.list_deliveries(hospital.hospital_id),
@@ -54,6 +67,7 @@ def generate_outputs(
             provider,
             scripts=scripts_by_hospital.get(hospital.hospital_id, []),
             channel_candidates=[dict(row) for row in repository.list_channel_candidates(hospital.hospital_id, "pending")],
+            hospital_summary=summary,
         )
         path.write_text(content, encoding="utf-8")
         markdown_files.append(path)
