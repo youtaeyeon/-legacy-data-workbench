@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS hospitals (
     contract_date TEXT,
     source_updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS hospital_summaries (
+    hospital_id TEXT PRIMARY KEY REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
+    summary TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS hospital_changes (
     id INTEGER PRIMARY KEY,
     hospital_id TEXT NOT NULL REFERENCES hospitals(hospital_id) ON DELETE CASCADE,
@@ -179,6 +183,19 @@ class Repository:
             )
             for row in rows
         ]
+
+    def get_hospital_summary(self, hospital_id: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT summary FROM hospital_summaries WHERE hospital_id=?", (hospital_id,)
+        ).fetchone()
+        return row["summary"] if row is not None else None
+
+    def save_hospital_summary(self, hospital_id: str, summary: str) -> None:
+        self.connection.execute(
+            """INSERT INTO hospital_summaries (hospital_id, summary) VALUES (?, ?)
+               ON CONFLICT(hospital_id) DO UPDATE SET summary=excluded.summary""",
+            (hospital_id, summary),
+        )
 
     def record_change(self, change: FieldChange) -> None:
         self.connection.execute(

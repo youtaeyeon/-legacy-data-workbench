@@ -30,13 +30,15 @@ def render_hospital_markdown(
     *,
     scripts: list[dict] | None = None,
     channel_candidates: list[dict] | None = None,
+    hospital_summary: str | None = None,
 ) -> str:
     provider = provider or MockProvider()
+    summary = hospital_summary if hospital_summary is not None else provider.summarize_hospital(hospital)
     relevant = [item for item in contents if item.relevance_status == "relevant"]
     lines = [
         f"# {_text(hospital.hospital_name)}",
         "",
-        f"> {_text(provider.summarize_hospital(hospital))}",
+        f"> {_text(summary)}",
         "",
         "## 기본 정보",
         "",
