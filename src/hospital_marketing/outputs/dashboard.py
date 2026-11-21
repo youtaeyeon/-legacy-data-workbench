@@ -122,3 +122,18 @@ def render_dashboard(
     html = _dashboard_html(payload)
     output_path.write_text(html, encoding="utf-8")
     return output_path
+
+
+def refresh_dashboard(
+    repository: Repository,
+    target_dir: Path,
+    *,
+    registered_products: Sequence[str] = DEFAULT_PRODUCTS,
+    import_report: ImportReport | None = None,
+) -> Path:
+    return render_dashboard(
+        repository,
+        Path(target_dir) / "dashboard" / "index.html",
+        registered_products=registered_products,
+        import_report=import_report,
+    )

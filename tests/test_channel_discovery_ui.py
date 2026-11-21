@@ -48,6 +48,35 @@ def test_approving_candidate_refreshes_dashboard_wiki_and_excel(tmp_path):
     repository.close()
 
 
+def test_rejecting_candidate_refreshes_dashboard(tmp_path):
+    import json
+
+    _app()
+    target = tmp_path / "target"
+    repository = Repository(target / "data" / "app.db")
+    repository.initialize()
+    hospital = Hospital("MOCK-REJECT", "목업 병원")
+    repository.upsert_hospital(hospital)
+    candidate = ChannelDiscoveryService(repository).save_candidates(hospital.hospital_id, [
+        ChannelCandidate("유튜브", "목업 채널", "https://youtube.com/@mock", "가상 근거", 0.6)
+    ])[0]
+    dialog = ChannelCandidatesDialog(repository, object(), [hospital], target)
+
+    action = dialog.table.cellWidget(0, 6)
+    reject_button = cast(QtWidgets.QPushButton, action.findChildren(QtWidgets.QPushButton)[1])
+    reject_button.click()
+
+    dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
+    payload = dashboard.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
+    hospital_data = json.loads(payload)["hospitals"][0]
+    assert hospital_data["channel_candidates"] == []
+    assert repository.list_channel_candidates(hospital.hospital_id)[0]["status"] == "rejected"
+    assert "대시보드에 반영" in dialog.status_label.text()
+    assert candidate.id is not None
+    dialog.close()
+    repository.close()
+
+
 def test_closing_dialog_after_discovery_finishes_keeps_thread_reference_valid(tmp_path, monkeypatch):
     _app()
     target = tmp_path / "target"

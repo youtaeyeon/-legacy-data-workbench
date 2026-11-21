@@ -15,6 +15,7 @@ from .domain import Channel, ContentItem, ContentScript
 from .channel_discovery import ChannelDiscoveryService, parse_discovery_response
 from .providers import ProviderRequestError
 from .importer import ImportService
+from .outputs.dashboard import refresh_dashboard
 from .outputs.generate import OutputManifest, generate_outputs
 from .report import ImportReport
 from .repository import Repository
@@ -76,6 +77,11 @@ class ImportWorkflow:
         source_dir = Path(source_dir)
         target_dir = Path(target_dir)
         settings = self.settings_store.load()
+        products = tuple(sorted(
+            (keyword.term for keyword in settings.product_keywords if keyword.enabled),
+            key=len,
+            reverse=True,
+        ))
         last_percent = 0
 
         def report_progress(stage: str, current: int, total: int, message: str) -> None:
@@ -97,6 +103,20 @@ class ImportWorkflow:
         )
         repository = self.repository_factory(target_dir / "data" / "app.db")
         repository.initialize()
+        report = None
+
+        def refresh_current_dashboard() -> None:
+            try:
+                refresh_dashboard(
+                    repository,
+                    target_dir,
+                    registered_products=products,
+                    import_report=report,
+                )
+            except OSError:
+                if on_progress:
+                    on_progress(WorkflowProgress("outputs", 0, 1, "대시보드 갱신에 실패했습니다.", last_percent))
+
         try:
             existing_ids = {hospital.hospital_id for hospital in repository.list_hospitals()}
             report = ImportService(repository).import_folder(
@@ -106,6 +126,7 @@ class ImportWorkflow:
                 on_progress=lambda current, total, name: report_progress("files", current, total, f"원본 파일 읽기·문서 변환 · {current}/{total} · {name}"),
             )
             report.issues.extend(large_source_file_issue(item) for item in large_source_files)
+            refresh_current_dashboard()
             if mock_mode or provider_id == "mock":
                 provider = self.provider_registry.create("mock")
             elif provider_id == "local-cli":
@@ -180,14 +201,10 @@ class ImportWorkflow:
                             channel_failures += 1
                             failure_details.append({"hospital_id": hospital.hospital_id,
                                                     "reason": type(exc).__name__})
+                refresh_current_dashboard()
 
             classified_count = 0
             needs_review_count = 0
-            products = tuple(sorted(
-                (keyword.term for keyword in settings.product_keywords if keyword.enabled),
-                key=len,
-                reverse=True,
-            ))
             hospitals = repository.list_hospitals()
             for hospital_index, hospital in enumerate(hospitals, 1):
                 if cancel_event is not None and cancel_event.is_set():
@@ -214,6 +231,7 @@ class ImportWorkflow:
                         classified_count += 1
                         if result.relevance_status == "needs_review":
                             needs_review_count += 1
+            refresh_current_dashboard()
 
             for script in repository.list_scripts():
                 if cancel_event is not None and cancel_event.is_set():
@@ -257,6 +275,7 @@ class ImportWorkflow:
             self._write_import_report(report, target_dir, result)
             return result
         finally:
+            refresh_current_dashboard()
             repository.close()
 
     @staticmethod

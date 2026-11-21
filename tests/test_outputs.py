@@ -9,7 +9,7 @@ from openpyxl import load_workbook
 from hospital_marketing.ai.mock import MockProvider
 from hospital_marketing.domain import Channel, ContentItem, ContentScript, EquipmentDelivery, Hospital, MarketingMaterial
 from hospital_marketing.outputs.generate import generate_outputs
-from hospital_marketing.outputs.dashboard import render_dashboard
+from hospital_marketing.outputs.dashboard import refresh_dashboard, render_dashboard
 from hospital_marketing.repository import Repository
 from hospital_marketing.report import ImportReport
 from hospital_marketing.settings import DEFAULT_PRODUCTS
@@ -74,6 +74,20 @@ def test_generates_standalone_filterable_html_without_irrelevant_content(tmp_pat
     parser = LocalAssetParser()
     parser.feed(html)
     assert parser.local_references == []
+    repository.close()
+
+
+def test_refresh_dashboard_reads_latest_database_without_provider(tmp_path):
+    repository = _repository(tmp_path)
+    target = tmp_path / "target"
+
+    path = refresh_dashboard(repository, target, registered_products=("새 제품",))
+
+    payload = json.loads(path.read_text(encoding="utf-8").split('id="dashboard-data">', 1)[1].split("</script>", 1)[0])
+    assert payload["hospitals"][0]["hospital_name"] == "목업 병원 001"
+    assert payload["product_keywords"] == ["새 제품"]
+    assert not (target / "wiki").exists()
+    assert not (target / "exports").exists()
     repository.close()
 
 

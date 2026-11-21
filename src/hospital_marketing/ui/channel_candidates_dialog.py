@@ -9,6 +9,7 @@ from ..domain import Hospital
 from ..providers import ProviderRequestError
 from ..repository import Repository
 from ..ai.mock import MockProvider
+from ..outputs.dashboard import refresh_dashboard
 from ..outputs.generate import generate_outputs
 
 
@@ -118,6 +119,10 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
     def _approve(self, candidate_id: int) -> None:
         self.service.approve(candidate_id)
         try:
+            refresh_dashboard(self.repository, self.target_dir)
+        except OSError:
+            pass
+        try:
             generate_outputs(self.repository, self.target_dir, MockProvider())
         except OSError:
             self.status_label.setText("채널은 등록했지만 결과물 갱신에 실패했습니다. 결과 저장 폴더와 권한을 확인해 주세요.")
@@ -128,7 +133,14 @@ class ChannelCandidatesDialog(QtWidgets.QDialog):
 
     def _reject(self, candidate_id: int) -> None:
         self.service.reject(candidate_id)
+        try:
+            refresh_dashboard(self.repository, self.target_dir)
+        except OSError:
+            self.status_label.setText("후보는 거절했지만 대시보드 갱신에 실패했습니다. 결과 저장 폴더와 권한을 확인해 주세요.")
+            self._reload_candidates()
+            return
         self._reload_candidates()
+        self.status_label.setText("거절한 후보를 대시보드에 반영했습니다.")
 
     def _start_discovery(self) -> None:
         self.cancel_event.clear()
