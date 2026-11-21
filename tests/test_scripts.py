@@ -151,7 +151,7 @@ def test_script_output_escapes_html_injection_and_only_prunes_managed_folder(tmp
 
     html = manifest.dashboard.read_text(encoding="utf-8")
     assert "</script><img onerror" not in html
-    assert "\\u003c/script\\u003e" in html
+    assert "\\u003c/script\\u003e" in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
     assert not (target / "scripts" / "stale" / "stale.md").exists()
     assert (target / "wiki" / "user-note.md").read_text(encoding="utf-8") == "keep"
     repository.close()

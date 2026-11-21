@@ -88,9 +88,7 @@ def test_approving_candidate_preserves_summaries_and_product_keywords_without_ai
         wiki = (target / "wiki" / f"{hospital.hospital_id}.md").read_text(encoding="utf-8")
         assert f"> 보존할 AI 요약: {hospital.hospital_name}" in wiki
     assert candidate.url in (target / "wiki" / f"{hospitals[0].hospital_id}.md").read_text(encoding="utf-8")
-    payload = json.loads((target / "dashboard" / "index.html").read_text(encoding="utf-8").split(
-        'id="dashboard-data">', 1
-    )[1].split("</script>", 1)[0])
+    payload = json.loads((target / "dashboard" / "data.js").read_text(encoding="utf-8").split("=", 1)[1].strip().removesuffix(";"))
     assert payload["product_keywords"] == ["사용자 지정 제품"]
     assert provider.calls == 2
     dialog.close()
@@ -128,8 +126,7 @@ def test_rejecting_candidate_refreshes_dashboard(tmp_path):
     reject_button.click()
 
     dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
-    payload = dashboard.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
-    dashboard_data = json.loads(payload)
+    dashboard_data = json.loads((target / "dashboard" / "data.js").read_text(encoding="utf-8").split("=", 1)[1].strip().removesuffix(";"))
     hospital_data = dashboard_data["hospitals"][0]
     assert hospital_data["channel_candidates"] == []
     assert dashboard_data["product_keywords"] == ["사용자 제품"]

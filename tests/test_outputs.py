@@ -27,6 +27,11 @@ def _repository(tmp_path):
     return repository
 
 
+def _dashboard_data(path):
+    source = (Path(path).parent / "data.js").read_text(encoding="utf-8")
+    return json.loads(source.split("=", 1)[1].strip().removesuffix(";"))
+
+
 def test_generates_hospital_markdown_with_ai_summary_and_related_content_only(tmp_path):
     repository = _repository(tmp_path)
 
@@ -90,18 +95,19 @@ def test_generates_standalone_filterable_html_without_irrelevant_content(tmp_pat
     manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
 
     html = manifest.dashboard.read_text(encoding="utf-8")
+    data_js = (manifest.dashboard.parent / "data.js").read_text(encoding="utf-8")
     assert 'id="search-filter"' in html
     assert 'id="product-filter"' in html
     assert 'id="platform-filter"' in html
     assert "addEventListener('input'" in html
     assert "addEventListener('change'" in html
-    assert "울트라클리어 소개" in html
-    assert "병원 일상" not in html
-    assert "<script src=" not in html
+    assert "울트라클리어 소개" in data_js
+    assert "병원 일상" not in data_js
+    assert '<script src="data.js"></script>' in html
     assert 'rel="stylesheet" href=' not in html
     assert "fonts.googleapis.com" not in html
     assert "img.youtube.com" not in html
-    assert "example.test/content/1" in html
+    assert "example.test/content/1" in data_js
 
     class LocalAssetParser(HTMLParser):
         def __init__(self):
@@ -116,7 +122,7 @@ def test_generates_standalone_filterable_html_without_irrelevant_content(tmp_pat
 
     parser = LocalAssetParser()
     parser.feed(html)
-    assert parser.local_references == []
+    assert parser.local_references == ["data.js"]
     repository.close()
 
 
@@ -126,7 +132,7 @@ def test_refresh_dashboard_reads_latest_database_without_provider(tmp_path):
 
     path = refresh_dashboard(repository, target, registered_products=("새 제품",))
 
-    payload = json.loads(path.read_text(encoding="utf-8").split('id="dashboard-data">', 1)[1].split("</script>", 1)[0])
+    payload = _dashboard_data(path)
     assert payload["hospitals"][0]["hospital_name"] == "목업 병원 001"
     assert payload["product_keywords"] == ["새 제품"]
     assert not (target / "wiki").exists()
@@ -148,8 +154,7 @@ def test_dashboard_uses_reference_layout_and_only_available_hospital_fields(tmp_
     manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
 
     html = manifest.dashboard.read_text(encoding="utf-8")
-    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
-    hospital = json.loads(payload)["hospitals"][0]
+    hospital = _dashboard_data(manifest.dashboard)["hospitals"][0]
     contents = hospital["contents"]
     assert contents[0]["relevance_status"] == "relevant"
     assert contents[0]["usage_status"] == "미활용"
@@ -169,14 +174,8 @@ def test_dashboard_uses_reference_layout_and_only_available_hospital_fields(tmp_
     assert 'data-tab="analysis"' in html
     assert 'data-tab="materials"' in html
     assert 'id="search-filter"' in html and 'id="platform-filter"' in html
-    assert "목업 병원 001" in html
-    assert "가상권역 A" in html
-    assert "제품 소개 리플릿" in html
-    assert "목업 채널" in html
-    assert "울트라클리어 소개" in html
-    assert "목업 브리핑 요약" in html
-    assert "자동 수집" in html
-    assert "확인 필요" in html
+    for value in ("목업 병원 001", "가상권역 A", "제품 소개 리플릿", "목업 채널", "울트라클리어 소개", "목업 브리핑 요약", "자동 수집", "확인 필요"):
+        assert value in json.dumps(hospital, ensure_ascii=False)
     assert "위험 URL" not in html
     assert "javascript:alert(1)" not in html
     assert 'id="script-modal"' in html and "openScript" in html
@@ -201,8 +200,7 @@ def test_dashboard_separates_summary_and_hospital_management_and_includes_import
     dashboard = render_dashboard(repository, tmp_path / "dashboard.html", import_report=report)
 
     html = dashboard.read_text(encoding="utf-8")
-    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
-    data = json.loads(payload)
+    data = _dashboard_data(dashboard)
     assert 'id="dashboard-summary"' in html
     assert 'id="hospital-management"' in html
     assert data["import_summary"] == {
@@ -226,7 +224,7 @@ def test_dashboard_motion_supports_view_tabs_lists_modals_counters_and_reduced_m
     dashboard = render_dashboard(repository, tmp_path / "dashboard.html")
 
     html = dashboard.read_text(encoding="utf-8")
-    assert html.count("<script>") == 1
+    assert html.count("<script>") == 2
     assert "stopImmediatePropagation" not in html
     assert "prefers-reduced-motion:reduce" in html
     assert "matchMedia('(prefers-reduced-motion: reduce)')" in html
@@ -264,7 +262,7 @@ def test_dashboard_keeps_mock_label_and_formats_visible_dates(tmp_path):
 
     html = manifest.dashboard.read_text(encoding="utf-8")
     assert "MOCK DATA · MARKETING WIKI" in html
-    assert "contract_date" in html
+    assert "contract_date" in (manifest.dashboard.parent / "data.js").read_text(encoding="utf-8")
     assert "published_at" in html
     repository.close()
 
@@ -275,7 +273,7 @@ def test_content_feed_filters_by_content_matched_product_only(tmp_path):
     manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
 
     html = manifest.dashboard.read_text(encoding="utf-8")
-    assert '"matched_product"' in html
+    assert '"matched_product"' in (manifest.dashboard.parent / "data.js").read_text(encoding="utf-8")
     assert "renderContents" in html
     repository.close()
 
@@ -287,8 +285,9 @@ def test_embedded_html_data_escapes_script_injection(tmp_path):
     manifest = generate_outputs(repository, tmp_path / "target", MockProvider())
 
     html = manifest.dashboard.read_text(encoding="utf-8")
-    assert "</script><img src=x" not in html
-    assert "\\u003c/script\\u003e" in html
+    data_js = (manifest.dashboard.parent / "data.js").read_text(encoding="utf-8")
+    assert "</script><img src=x" not in html + data_js
+    assert "\\u003c/script\\u003e" in data_js
     repository.close()
 
 
@@ -330,8 +329,7 @@ def test_dashboard_product_filter_and_registered_products_kpi_use_configured_key
     )
 
     html = manifest.dashboard.read_text(encoding="utf-8")
-    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
-    data = json.loads(payload)
+    data = _dashboard_data(manifest.dashboard)
     assert data["product_keywords"] == list(registered_products)
     assert 'id="product-filter"' in html
     assert "for(const value of registeredProducts)" in html
@@ -345,8 +343,44 @@ def test_direct_dashboard_render_defaults_to_existing_products(tmp_path):
     dashboard = render_dashboard(repository, tmp_path / "dashboard.html")
 
     html = dashboard.read_text(encoding="utf-8")
-    payload = html.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
-    assert json.loads(payload)["product_keywords"] == list(DEFAULT_PRODUCTS)
+    assert _dashboard_data(dashboard)["product_keywords"] == list(DEFAULT_PRODUCTS)
     assert 'id="dashboard-summary"' in html and 'id="hospital-management"' in html
     assert "가져오기 기록이 없습니다." in html
+    repository.close()
+
+
+def test_external_dashboard_data_has_stable_version_and_polling_state_restore(tmp_path):
+    repository = _repository(tmp_path)
+    dashboard = render_dashboard(repository, tmp_path / "dashboard" / "index.html")
+    html = dashboard.read_text(encoding="utf-8")
+    data_path = dashboard.parent / "data.js"
+
+    assert data_path.is_file()
+    data_js = data_path.read_text(encoding="utf-8")
+    payload = json.loads(data_js.split("=", 1)[1].strip().removesuffix(";"))
+    assert payload["data_version"]
+    assert "window.__DASHBOARD_DATA__" in data_js
+    assert 'id="dashboard-data"' not in html
+    assert '<script src="data.js"></script>' in html
+    assert "data.js?t=" in html and "setInterval" in html and "5000" in html
+    assert "sessionStorage" in html and "location.reload()" in html
+    assert "scrollX" in html and "scrollY" in html
+    repository.close()
+
+
+def test_dashboard_data_version_changes_only_when_payload_changes(tmp_path):
+    repository = _repository(tmp_path)
+    dashboard = tmp_path / "dashboard" / "index.html"
+
+    render_dashboard(repository, dashboard)
+    data_path = dashboard.parent / "data.js"
+    first = json.loads(data_path.read_text(encoding="utf-8").split("=", 1)[1].strip().removesuffix(";"))
+    render_dashboard(repository, dashboard)
+    same = json.loads(data_path.read_text(encoding="utf-8").split("=", 1)[1].strip().removesuffix(";"))
+    repository.upsert_hospital(Hospital("MOCK-002", "목업 신규 병원", "가상권역 B"))
+    render_dashboard(repository, dashboard)
+    changed = json.loads(data_path.read_text(encoding="utf-8").split("=", 1)[1].strip().removesuffix(";"))
+
+    assert first["data_version"] == same["data_version"]
+    assert changed["data_version"] != first["data_version"]
     repository.close()

@@ -548,16 +548,16 @@ def test_saving_product_keywords_refreshes_dashboard(tmp_path, monkeypatch):
     window._open_product_keywords()
 
     dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
-    payload = dashboard.split('id="dashboard-data">', 1)[1].split("</script>", 1)[0]
-    assert json.loads(payload)["product_keywords"] == ["새 제품"]
-    assert json.loads(payload)["import_summary"] == {
+    payload = json.loads((target / "dashboard" / "data.js").read_text(encoding="utf-8").split("=", 1)[1].strip().removesuffix(";"))
+    assert payload["product_keywords"] == ["새 제품"]
+    assert payload["import_summary"] == {
         "inserted_count": 1,
         "updated_count": 2,
         "unchanged_count": 3,
         "inserted_hospital_ids": ["MOCK-KEYWORD"],
         "updated_hospital_ids": [],
     }
-    assert "MOCK-KEYWORD" in dashboard
+    assert "MOCK-KEYWORD" in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
     window.close()
 
 

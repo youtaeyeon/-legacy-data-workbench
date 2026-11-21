@@ -26,8 +26,8 @@ def test_workflow_initial_and_weekly_runs_persist_and_regenerate_outputs(tmp_pat
     assert second.outputs.excel.is_file()
     assert len(list((target / "wiki").glob("*.md"))) == 4
     html = second.outputs.dashboard.read_text(encoding="utf-8")
-    assert "울트라클리어" in html
-    assert "병원 일상 브이로그" not in html
+    assert "울트라클리어" in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
+    assert "병원 일상 브이로그" not in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
     report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
     assert report["inserted_count"] == 1
     assert "api_key" not in json.dumps(report)
@@ -54,7 +54,7 @@ def test_dashboard_is_refreshed_after_import_before_classification_failure(tmp_p
         workflow.run(fixtures / "initial", target, mock_mode=True)
 
     dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
-    assert "MOCK-001" in dashboard
+    assert "MOCK-001" in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
 
 
 def test_mock_workflow_collects_channels_and_recent_posts_only_for_new_hospitals(tmp_path):
@@ -81,7 +81,7 @@ def test_mock_workflow_collects_channels_and_recent_posts_only_for_new_hospitals
     assert source == "자동 수집"
     report = json.loads((target / "reports" / "last-import.json").read_text(encoding="utf-8"))
     assert report["channel_collection"]["channels_collected"] == 1
-    assert "목업 병원 소식" in (target / "dashboard" / "index.html").read_text(encoding="utf-8")
+    assert "목업 병원 소식" in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
     assert "목업 병원 소식" in (target / "wiki" / "MOCK-001.md").read_text(encoding="utf-8")
 
 
@@ -320,7 +320,7 @@ def test_low_confidence_channel_is_pending_and_visible_in_wiki_and_dashboard(tmp
         fixtures / "initial", target, mock_mode=True)
     assert result.channels_needing_review == 3
     dashboard = (target / "dashboard" / "index.html").read_text(encoding="utf-8")
-    assert "확인 계정" in dashboard
+    assert "확인 계정" in (target / "dashboard" / "data.js").read_text(encoding="utf-8")
     assert "channel_candidates.map" in dashboard
     wiki = (target / "wiki" / "MOCK-001.md").read_text(encoding="utf-8")
     assert "### 확인 필요" in wiki
